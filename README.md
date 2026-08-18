@@ -55,8 +55,29 @@ listening without a database connection.
 | Method | Route | Description |
 |--------|-------|-------------|
 | GET | `/health` | Liveness check, returns `{"status":"ok"}` |
+| GET | `/api/posts` | List posts; supports `?status=`, `?author=`, `?tags=`, `?sort=`, `?page=`, `?limit=` |
+| GET | `/api/posts/:id` | Fetch one post with its author populated |
+| POST | `/api/posts` | Create a post (auth arrives in step 4) |
+| PUT | `/api/posts/:id` | Update a post — author or admin only |
+| DELETE | `/api/posts/:id` | Delete a post — author or admin only |
 
-CRUD routes for posts and users arrive in step 3 (see roadmap below).
+### Query parameters
+
+`GET /api/posts` responds with the pagination envelope
+`{ data, page, limit, total, totalPages }`. `limit` defaults to 10 and is capped at
+100 — asking for more silently gets 100. `?tags=` accepts a comma-separated list and
+matches posts having any of them; `?sort=` accepts comma-separated fields with a `-`
+prefix for descending (default `-createdAt`).
+
+```bash
+curl 'http://localhost:3000/api/posts?status=published&tags=node,express&sort=-createdAt&page=1&limit=20'
+```
+
+Error responses use the envelope `{ "error": { "message", "status", "details" } }`.
+
+Interim states until step 4 lands: `POST /api/posts` is unprotected (and takes
+`author` from the request body), while `PUT`/`DELETE` return 401 for everyone
+because the ownership check has no authenticated user to read yet.
 
 ## Project structure
 
@@ -69,8 +90,10 @@ src/
   models/
     User.js        User schema (username, email, password, role)
     Post.js        Post schema (title, body, status, tags, author → User)
-  controllers/     (step 3)
-  routes/          (step 3)
+  controllers/
+    postController.js  Post CRUD handlers: filtering, sorting, pagination, ownership check
+  routes/
+    postRoutes.js  /api/posts router wiring the five handlers
   middleware/      (steps 4–5)
 docs/
   ARCHITECTURE.md  Layering, boot sequence, request flow
@@ -82,8 +105,8 @@ docs/
 | Step | Branch | Status |
 |------|--------|--------|
 | 1 | `step-1-project-setup` — Express server, health check, DB connection utility | ✅ merged (PR #1) |
-| 2 | `step-2-mongoose-schemas` — User and Post models | ✅ current branch |
-| 3 | `step-3-crud-query-features` — CRUD routes, `?status=`/`?author=` filters | planned |
+| 2 | `step-2-mongoose-schemas` — User and Post models | ✅ merged (PR #2) |
+| 3 | `step-3-crud-query-features` — CRUD routes, `?status=`/`?author=` filters | ✅ current branch |
 | 4 | `step-4-auth-validation` — bcrypt password hashing, JWT auth | planned |
 | 5 | `step-5-error-handling` — central error handler (ValidationError, duplicate key) | planned |
 | 6 | `step-6-docker` — Docker Compose (API + Mongo) | planned |

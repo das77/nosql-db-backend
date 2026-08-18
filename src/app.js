@@ -8,7 +8,8 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
-// Routes are mounted here in later steps, e.g.:
-// app.use('/api/posts', require('./routes/postRoutes'));
+app.use('/api/posts', require('./routes/postRoutes'));
+// /api/auth mounts here in step 4; the centralized error handler is appended
+// after all routes in step 5.
 
 module.exports = app;

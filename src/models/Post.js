@@ -33,8 +33,9 @@ const postSchema = new mongoose.Schema({
   }
 });
 
-// These back the ?status= / ?author= filters added in step 3.
+// These back the ?status= / ?author= / ?tags= filters added in step 3.
 postSchema.index({ status: 1 });
 postSchema.index({ author: 1 });
+postSchema.index({ tags: 1 });
 
 module.exports = mongoose.model('Post', postSchema);

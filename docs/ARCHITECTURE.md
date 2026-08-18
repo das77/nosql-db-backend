@@ -1,6 +1,6 @@
 # Architecture
 
-Current as of step 2 (`step-2-mongoose-schemas`). Sections marked *(planned)* describe
+Current as of step 3 (`step-3-crud-query-features`). Sections marked *(planned)* describe
 work scheduled for later steps and do not exist in the code yet.
 
 ## Overview
@@ -18,8 +18,8 @@ flowchart TD
         app["src/app.js<br/>Express app"]
         db["src/config/db.js<br/>connectDB()"]
         models["src/models/<br/>User.js · Post.js"]
-        routes["src/routes/ *(planned, step 3)*"]
-        controllers["src/controllers/ *(planned, step 3)*"]
+        routes["src/routes/<br/>postRoutes.js"]
+        controllers["src/controllers/<br/>postController.js"]
         middleware["src/middleware/ *(planned, steps 4–5)*"]
     end
 
@@ -30,19 +30,17 @@ flowchart TD
     server --> db
     db --> mongo
     models --> mongo
-    app -.-> routes
-    routes -.-> controllers
-    controllers -.-> models
+    app --> routes
+    routes --> controllers
+    controllers --> models
     app -.-> middleware
 
-    style routes stroke-dasharray: 5 5
-    style controllers stroke-dasharray: 5 5
     style middleware stroke-dasharray: 5 5
 ```
 
-Solid arrows are wired today; dashed arrows are the planned step-3+ layering. As of
-step 2 the models are defined and registered with Mongoose but not yet imported by
-`app.js` — nothing routes to them until step 3.
+Solid arrows are wired today; dashed arrows are planned layering. As of step 3 the
+route → controller → model path is live for `/api/posts`; `src/middleware/` stays
+empty until steps 4–5.
 
 ## Boot sequence
 
@@ -73,17 +71,25 @@ sequenceDiagram
 
 ## Request flow
 
-Today only one route exists:
-
 | Method | Route | Handler | Response |
 |--------|-------|---------|----------|
 | GET | `/health` | inline in `app.js` | 200 `{"status":"ok"}` |
+| GET | `/api/posts` | `postController.listPosts` | 200 `{ data, page, limit, total, totalPages }` |
+| GET | `/api/posts/:id` | `postController.getPost` | 200 post (author populated) / 404 |
+| POST | `/api/posts` | `postController.createPost` | 201 post / 400 |
+| PUT | `/api/posts/:id` | `postController.updatePost` | 200 post / 401 / 403 / 404 / 400 |
+| DELETE | `/api/posts/:id` | `postController.deletePost` | 204 / 401 / 403 / 404 |
+
+`/api/posts` requests flow `app.js` → `routes/postRoutes.js` →
+`controllers/postController.js` → `models/Post.js`. Reads populate `author` down to
+`username` and `email` only. Error responses use the target envelope
+`{ error: { message, status, details } }`, produced for now by a local `sendError`
+helper in the controller; step 5 replaces it with a central error-handling middleware
+without changing the shape.
 
 Global middleware: `express.json()` (malformed JSON bodies are rejected with 400 by
 Express's default error handling). Unknown routes fall through to Express 5's default
-404. Step 3 mounts resource routers (e.g. `app.use('/api/posts', ...)`) at the
-placeholder comment in `app.js`; step 5 replaces the default error handling with a
-central error-handling middleware.
+404. Step 4 mounts `/api/auth` and adds `requireAuth` to the mutation routes.
 
 ## Module responsibilities
 
@@ -138,4 +144,7 @@ Work proceeds one branch per step, merged to `main` by PR.
 | `6525abf` | `connectDB()` utility (`src/config/db.js`) |
 | `6bd3770` | `.gitkeep` files for `controllers/`, `routes/`, `middleware/`, `models/` |
 | `0ea61e9` | Merge PR #1 — step 1 complete |
-| *(uncommitted, step 2)* | `src/models/User.js`, `src/models/Post.js` |
+| `594f745` | Post model (`src/models/Post.js`) |
+| `c9ae7a6` | User model (`src/models/User.js`) |
+| `6d88872` | Merge PR #2 — step 2 complete |
+| *(uncommitted, step 3)* | `src/controllers/postController.js`, `src/routes/postRoutes.js`, `/api/posts` mount, `tags` index |

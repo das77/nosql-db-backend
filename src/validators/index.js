@@ -1,5 +1,5 @@
 const { body, validationResult } = require('express-validator');
-const sendError = require('../utils/sendError');
+const AppError = require('../utils/AppError');
 
 // These chains deliberately duplicate the Mongoose schema rules: they reject bad
 // input before a database round-trip and report all field errors at once. The
@@ -47,7 +47,7 @@ function handleValidationErrors(req, res, next) {
   if (!errors.isEmpty()) {
     // details is a flat array of message strings — the same shape the Mongoose
     // ValidationError branches produce, so clients see one consistent 400.
-    return sendError(res, 400, 'Validation failed', errors.array().map((e) => e.msg));
+    return next(new AppError(400, 'Validation failed', errors.array().map((e) => e.msg)));
   }
   next();
 }

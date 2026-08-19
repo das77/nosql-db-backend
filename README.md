@@ -95,6 +95,24 @@ curl 'http://localhost:3000/api/posts?status=published&tags=node,express&sort=-c
 
 Error responses use the envelope `{ "error": { "message", "status", "details" } }`.
 
+### Error responses
+
+Every error the API returns — validation failures, auth failures, not-found, conflicts,
+and unexpected server errors — goes through one centralized handler and uses the same
+envelope: `{ "error": { "message": string, "status": number, "details": [...] | null } }`.
+
+| Status | Meaning | Example |
+|--------|---------|---------|
+| 400 | Bad input | Failed validation chain or Mongoose validator, malformed `?author=` |
+| 401 | Not authenticated | Missing/invalid/expired bearer token, bad credentials |
+| 403 | Authenticated but not permitted | Editing/deleting someone else's post as a non-admin |
+| 404 | Resource not found | Unknown post id, malformed post `:id`, unmatched route |
+| 409 | Conflict | Duplicate `username`/`email` on register |
+| 500 | Unexpected server error | Never includes `err.message` or a stack trace |
+
+An unmatched route (e.g. `GET /api/nope`) also returns this JSON envelope with a 404,
+not Express's default HTML error page.
+
 ## Project structure
 
 ```
@@ -114,10 +132,12 @@ src/
     authRoutes.js  /api/auth router: register + login
   middleware/
     requireAuth.js Verifies the Bearer JWT, sets req.user { id, role }
+    notFound.js    Catch-all for unmatched routes — forwards a 404 AppError
+    errorHandler.js  Central error handler — the only place that writes the error envelope
   validators/
     index.js       express-validator chains + shared 400 collector
   utils/
-    sendError.js   Interim error envelope helper (replaced by middleware in step 5)
+    AppError.js    Error subclass carrying the status/details the handler responds with
 docs/
   ARCHITECTURE.md  Layering, boot sequence, request flow
   DESIGN.md        Schema design and rationale
@@ -130,8 +150,8 @@ docs/
 | 1 | `step-1-project-setup` — Express server, health check, DB connection utility | ✅ merged (PR #1) |
 | 2 | `step-2-mongoose-schemas` — User and Post models | ✅ merged (PR #2) |
 | 3 | `step-3-crud-query-features` — CRUD routes, `?status=`/`?author=` filters | ✅ merged (PR #3) |
-| 4 | `step-4-auth-validation` — bcrypt password hashing, JWT auth | ✅ current branch |
-| 5 | `step-5-error-handling` — central error handler (ValidationError, duplicate key) | planned |
+| 4 | `step-4-auth-validation` — bcrypt password hashing, JWT auth | ✅ merged (PR #4) |
+| 5 | `step-5-error-handling` — central error handler (ValidationError, duplicate key) | ✅ current branch |
 | 6 | `step-6-docker` — Docker Compose (API + Mongo) | planned |
 | 7 | `step-7-docs-rationale` — final documentation pass | planned |
 

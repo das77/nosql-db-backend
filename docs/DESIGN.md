@@ -1,6 +1,6 @@
 # Design
 
-Rationale for the decisions made in steps 1–4. What the code does lives in
+Rationale for the decisions made in steps 1–5. What the code does lives in
 [ARCHITECTURE.md](ARCHITECTURE.md); this file covers *why*.
 
 ## Step 1 — server and connection design
@@ -59,8 +59,8 @@ convenience without duplicating data.
   email validity is confirmed by delivery, not regex; a strict pattern only rejects
   legitimate unusual addresses.
 - **Enums with custom messages** (`role`, `status`) constrain state to known values, and
-  every validator uses the `[value, message]` / object form so step-5's error handler
-  can flatten `ValidationError` into readable client-facing messages.
+  every validator uses the `[value, message]` / object form so the central error handler
+  (step 5) can flatten `ValidationError` into readable client-facing messages.
 - **`createdAt` via `default: Date.now`** rather than `timestamps: true` — `updatedAt`
   isn't needed yet, and adding only what's used keeps documents minimal.
 
@@ -101,7 +101,7 @@ convenience without duplicating data.
   non-existent field is a no-op in Mongo, not an injection vector.
 - **Interim error envelope.** All errors already use the step-5 target shape
   `{ error: { message, status, details } }` via a local `sendError` helper, so the
-  step-5 refactor to central middleware is consumer-invisible.
+  step-5 refactor to central middleware was consumer-invisible (see below).
 
 ## Step 4 — auth and validation design
 
@@ -132,7 +132,8 @@ convenience without duplicating data.
   incoming email before lookup because the schema's `lowercase: true` normalizes on
   save, not on query.
 - **Token design.** Payload is `{ id, role }` with the id stringified at signing so
-  `requireAuth` hands `authorizePostMutation` exactly the shape step 3 coded against.
+  `requireAuth` hands `assertCanMutate` (renamed from `authorizePostMutation` in step 5)
+  exactly the shape step 3 coded against.
   Expiry is hardcoded at 1h (the spec's value; an env var would be unrequested
   configurability). Bearer-token-in-body response, no cookie — no browser consumes
   this API.
@@ -140,23 +141,62 @@ convenience without duplicating data.
   the body field is ignored, closing the forged-authorship hole the step-3 interim
   state documented.
 
+## Step 5 — centralized error handling design
+
+- **Hybrid classification: `AppError` plus a generic `err.name`/`err.code` switch.**
+  Framework-thrown errors (Mongoose `ValidationError`/`CastError`, Mongo `11000`, JWT
+  errors) are recognized generically in the handler. Anything where the status is a
+  *decision this code makes* — 401 no-header, 403 wrong owner, 404 no document, 400
+  bad filter value — is thrown explicitly as an `AppError`. The generic switch alone
+  can't express those without reinventing per-site response writing.
+- **The `isValid()` guard in `listPosts` before the `?author=` filter is applied.**
+  It looks like redundant validation — Mongo would reject a malformed ObjectId with a
+  `CastError` anyway — but that's exactly the problem it prevents: without it,
+  `CastError` would mean two different things (a bad `:id` path param *and* a bad
+  `?author=` query value), and the central handler can't tell them apart to pick 404
+  vs. 400. Rejecting the malformed filter before it reaches Mongo means `CastError`
+  reaching the handler can only ever come from a malformed `:id`, so the handler maps
+  it to 404 with no heuristics. Behavior for callers is unchanged: `?author=garbage`
+  still returns 400 `'Invalid author id'`, just thrown explicitly instead of caught
+  from Mongo.
+- **Route "not found" through `next(new AppError(404, ...))`, not a direct response.**
+  A missing document isn't technically a thrown error in the abstract, but writing
+  `res.status(404).json(...)` at each of the four call sites would resurrect the
+  five-places-know-the-shape problem this step exists to remove. One path for every
+  error response, no exceptions for 404.
+- **Lean on Express 5's async auto-forwarding to delete try/catch.** Express 5.2.1
+  forwards a rejected promise from an `async` route handler to `next(err)`
+  automatically. Combined with the `isValid()` guard (no ambiguous `CastError` left)
+  and explicit `AppError` throws, every controller's `try`/`catch` became pure
+  pass-through and was deleted — this took roughly a third of the lines out of
+  `postController.js` with zero behavior change.
+- **`requireAuth` keeps its `try/catch`.** It is not an `async` function, so Express's
+  promise auto-forwarding doesn't apply to it; it must call `next(err)` explicitly to
+  reach the handler. The asymmetry with the controllers is deliberate, not an
+  oversight left behind by the refactor.
+- **500s never include `err.message` or a stack trace in the response body.** The
+  fallback branch always responds with the fixed string `'Internal server error'` and
+  `details: null`; the real error goes to `console.error` server-side only.
+- **Catch-all 404 for unmatched routes.** Before this step, `GET /api/nope` fell
+  through to Express's built-in handler and returned an HTML error page — the one
+  response in the API that didn't match the documented envelope. `notFound` (mounted
+  after every route, before `errorHandler`) closes that gap with a three-line module.
+
 ## Known constraints carried forward
 
 These are consequences of the current design that later steps must handle:
 
 1. **Duplicate `username`/`email` is not a `ValidationError`.** Unique-index violations
-   surface as `MongoServerError` code `11000`. The register controller maps it to 409;
-   step 5's central error handler must keep an explicit case for it when the branch
-   moves there.
+   surface as `MongoServerError` code `11000`. The central `errorHandler` maps it to
+   409.
 2. **Login must opt into the password field.** Because of `select: false`, the login
    controller uses `.select('+password')` — it is the only place that should.
 3. **No retry on DB connection.** Under Docker Compose (step 6), the API container may
    need a healthcheck/`depends_on` condition (or a connection retry) since Mongo can
    come up slower than the API.
-4. **Every controller still emits errors via the `sendError` util**
-   (`src/utils/sendError.js`). Step 5 deletes it and converts all call sites in
-   `postController.js`, `authController.js`, `requireAuth.js`, and
-   `validators/index.js` to `next(err)` + central middleware; response shapes are
-   already final, so the refactor is consumer-invisible.
+4. **`requireAuth` is the only non-async error source and keeps an explicit
+   `try/catch`.** Every other error path relies on Express 5's promise
+   auto-forwarding or an explicit `throw`/`next(new AppError(...))`; this is the one
+   deliberate exception, and it exists because `requireAuth` isn't declared `async`.
 5. **Step 6 may use a slim Node base image** — `bcryptjs` is pure JS, no build
    toolchain needed. The container's env must supply a real `JWT_SECRET`.

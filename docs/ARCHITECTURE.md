@@ -1,6 +1,6 @@
 # Architecture
 
-Current as of step 4 (`step-4-auth-validation`). Sections marked *(planned)* describe
+Current as of step 5 (`step-5-error-handling`). Sections marked *(planned)* describe
 work scheduled for later steps and do not exist in the code yet.
 
 ## Overview
@@ -20,7 +20,7 @@ flowchart TD
         models["src/models/<br/>User.js · Post.js"]
         routes["src/routes/<br/>postRoutes.js · authRoutes.js"]
         controllers["src/controllers/<br/>postController.js · authController.js"]
-        middleware["src/middleware/<br/>requireAuth.js"]
+        middleware["src/middleware/<br/>requireAuth.js · notFound.js · errorHandler.js"]
         validators["src/validators/<br/>index.js"]
     end
 
@@ -36,12 +36,14 @@ flowchart TD
     routes --> validators
     routes --> controllers
     controllers --> models
+    controllers -.->|throw / next err| middleware
 ```
 
-As of step 4 the full layering is live: routes run `requireAuth` and the
-express-validator chains before their controllers, and the auth pair
-(`/api/auth/register`, `/api/auth/login`) issues the JWTs the middleware verifies.
-The step-5 centralized error handler is the one remaining planned piece.
+As of step 5 the full layering is live and every planned piece has landed: routes run
+`requireAuth` and the express-validator chains before their controllers, the auth pair
+(`/api/auth/register`, `/api/auth/login`) issues the JWTs the middleware verifies, and
+every error — thrown from an async controller, passed to `next()`, or an unmatched
+route — flows to the single `errorHandler` mounted last.
 
 ## Boot sequence
 
@@ -87,14 +89,32 @@ Protected routes run `requireAuth` first (a request without a valid
 `Authorization: Bearer <token>` gets 401 before validation can leak anything), then
 the express-validator chains with the shared `handleValidationErrors` collector, then
 the controller. `requireAuth` verifies the JWT against `JWT_SECRET` and sets
-`req.user = { id, role }` — the shape `authorizePostMutation` consumes. Reads populate
-`author` down to `username` and `email` only. Error responses use the target envelope
-`{ error: { message, status, details } }`, produced for now by `src/utils/sendError.js`;
-step 5 replaces it with a central error-handling middleware without changing the shape.
+`req.user = { id, role }` — the shape `assertCanMutate` consumes. Reads populate
+`author` down to `username` and `email` only.
+
+### Error path
+
+Every error response is produced by one place: `src/middleware/errorHandler.js`,
+mounted last in `app.js` (after `notFound`, after every route). Controllers no longer
+catch anything themselves — Express 5 forwards a rejected promise from an `async`
+handler to `next(err)` automatically, so a controller either returns a response or
+`throw`s. Two kinds of throw reach the handler:
+
+- **`AppError`** (`src/utils/AppError.js`) — status codes that are a decision this
+  code makes: 401/403 on `assertCanMutate`, 404 on a missing post, 400 on a malformed
+  `?author=` filter, 400 from `handleValidationErrors`, 401 from `requireAuth`.
+- **Framework errors**, classified generically in the handler: Mongoose
+  `ValidationError` → 400, `CastError` → 404 (unambiguous — see DESIGN.md), Mongo
+  `11000` → 409, stray JWT errors → 401, anything else → 500 (never leaks
+  `err.message` or a stack trace; logged server-side via `console.error`).
+
+`requireAuth` is not `async`, so Express's auto-forwarding does not apply to it — it
+keeps an explicit `try/catch` and calls `next(new AppError(...))` itself. Unmatched
+routes hit `notFound`, which raises a 404 `AppError` so even `GET /api/nope` returns
+the same JSON envelope instead of Express's default HTML error page.
 
 Global middleware: `express.json()` (malformed JSON bodies are rejected with 400 by
-Express's default error handling). Unknown routes fall through to Express 5's default
-404.
+Express's default error handling).
 
 ## Module responsibilities
 
@@ -105,9 +125,11 @@ Express's default error handling). Unknown routes fall through to Express 5's de
 | `src/config/db.js` | Single `connectDB()` — connect or `process.exit(1)` | Retry/backoff (fail-fast is intentional at this stage) |
 | `src/models/*.js` | Schema definitions, validation rules, indexes; `User.js` owns bcrypt hashing (pre-save hook) + `comparePassword` | Request handling or token issuing |
 | `src/middleware/requireAuth.js` | Verify Bearer JWT, set `req.user { id, role }` | Ownership checks (controller's job) or token issuing |
+| `src/middleware/notFound.js` | Turn an unmatched route into a 404 `AppError` | Match/validate routes (Express's router does that) |
+| `src/middleware/errorHandler.js` | The one place that writes `{ error: {...} }` | Business logic — it only classifies and formats |
 | `src/validators/index.js` | express-validator chains + shared 400 collector | Business rules; Mongoose validation remains the last line of defense |
-| `src/controllers/authController.js` | Register/login, JWT signing, public user serialization | Password hashing (model's job) |
-| `src/utils/sendError.js` | Interim error envelope | — (deleted in step 5) |
+| `src/controllers/authController.js` | Register/login, JWT signing, public user serialization | Password hashing (model's job), catching its own errors |
+| `src/utils/AppError.js` | Throwable carrying `status`/`details` for deliberate error responses | Formatting the JSON envelope (handler's job) |
 
 ## Data model
 
@@ -158,4 +180,6 @@ Work proceeds one branch per step, merged to `main` by PR.
 | `6d88872` | Merge PR #2 — step 2 complete |
 | `c0886da`–`7645f14` | Step-3 CRUD: controller, routes, `/api/posts` mount, `tags` index |
 | `893ecf2` | Merge PR #3 — step 3 complete |
-| *(uncommitted, step 4)* | Auth: `authController.js`, `authRoutes.js`, `requireAuth.js`, `validators/`, `utils/sendError.js`, bcrypt hook in `User.js` |
+| `512033a`–`5a0ac04` | Step-4 auth: `authController.js`, `authRoutes.js`, `requireAuth.js`, `validators/`, bcrypt hook in `User.js` |
+| `5caa512` | Merge PR #4 — step 4 complete |
+| *(uncommitted, step 5)* | Central error handling: `AppError.js`, `errorHandler.js`, `notFound.js`; `sendError.js` deleted; controllers/middleware/validators converted to throw/`next(err)` |

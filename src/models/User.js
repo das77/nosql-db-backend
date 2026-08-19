@@ -1,4 +1,7 @@
 const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
+
+const SALT_ROUNDS = 10;
 
 // Deliberately permissive; real-world email validity is confirmed by delivery, not regex.
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -39,5 +42,25 @@ const userSchema = new mongoose.Schema({
     default: Date.now
   }
 });
+
+// Hash only when the plaintext actually changed, so unrelated saves (a future
+// profile update) don't re-hash an already-hashed value.
+// Hook ordering is load-bearing: Mongoose runs validators BEFORE pre('save'),
+// so minlength: 8 validates the plaintext, not the 60-char hash. That is the
+// behavior we want — do not "fix" this into a pre('validate') hook.
+// Mongoose 9 dropped the legacy next()-callback hook style: an async function
+// that returns (or throws) is now the only supported signature for pre('save').
+userSchema.pre('save', async function hashPassword() {
+  if (!this.isModified('password')) {
+    return;
+  }
+  this.password = await bcrypt.hash(this.password, SALT_ROUNDS);
+});
+
+// Requires the document to have been loaded with .select('+password') — it
+// silently compares against undefined otherwise. Only the login flow does this.
+userSchema.methods.comparePassword = function comparePassword(candidate) {
+  return bcrypt.compare(candidate, this.password);
+};
 
 module.exports = mongoose.model('User', userSchema);

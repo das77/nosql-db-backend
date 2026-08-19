@@ -1,6 +1,6 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
-const sendError = require('../utils/sendError');
+const AppError = require('../utils/AppError');
 
 const TOKEN_EXPIRY = '1h';
 
@@ -24,45 +24,25 @@ function publicUser(user) {
 
 // POST /api/auth/register
 async function register(req, res) {
-  try {
-    // Whitelist: role is deliberately excluded — a client must not be able to
-    // self-register as admin; the schema default ('user') applies.
-    const { username, email, password } = req.body;
-    const user = await User.create({ username, email, password });
-    res.status(201).json({ token: signToken(user), user: publicUser(user) });
-  } catch (err) {
-    if (err.name === 'ValidationError') {
-      return sendError(res, 400, 'Validation failed',
-        Object.values(err.errors).map((e) => e.message));
-    }
-    if (err.code === 11000) {
-      // Duplicate username/email is a unique-index violation, not a
-      // ValidationError. 409 (not 400): the request was well-formed, it
-      // conflicts with existing state.
-      return sendError(res, 409, 'Username or email already in use');
-    }
-    console.error(err);
-    sendError(res, 500, 'Internal server error');
-  }
+  // Whitelist: role is deliberately excluded — a client must not be able to
+  // self-register as admin; the schema default ('user') applies.
+  const { username, email, password } = req.body;
+  const user = await User.create({ username, email, password });
+  res.status(201).json({ token: signToken(user), user: publicUser(user) });
 }
 
 // POST /api/auth/login
 async function login(req, res) {
-  try {
-    // The schema lowercases email on save but not on query — normalize here or
-    // a user who typed Ada@example.com at registration could never log in.
-    const email = String(req.body.email).toLowerCase().trim();
-    // .select('+password') is mandatory here and only here (see User.js).
-    const user = await User.findOne({ email }).select('+password');
-    // One message for both failure modes — do not reveal whether the account exists.
-    if (!user || !(await user.comparePassword(req.body.password))) {
-      return sendError(res, 401, 'Invalid email or password');
-    }
-    res.json({ token: signToken(user), user: publicUser(user) });
-  } catch (err) {
-    console.error(err);
-    sendError(res, 500, 'Internal server error');
+  // The schema lowercases email on save but not on query — normalize here or
+  // a user who typed Ada@example.com at registration could never log in.
+  const email = String(req.body.email).toLowerCase().trim();
+  // .select('+password') is mandatory here and only here (see User.js).
+  const user = await User.findOne({ email }).select('+password');
+  // One message for both failure modes — do not reveal whether the account exists.
+  if (!user || !(await user.comparePassword(req.body.password))) {
+    throw new AppError(401, 'Invalid email or password');
   }
+  res.json({ token: signToken(user), user: publicUser(user) });
 }
 
 module.exports = { register, login };

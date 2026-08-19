@@ -9,7 +9,7 @@ app.get('/health', (req, res) => {
 });
 
 app.use('/api/posts', require('./routes/postRoutes'));
-// /api/auth mounts here in step 4; the centralized error handler is appended
-// after all routes in step 5.
+app.use('/api/auth', require('./routes/authRoutes'));
+// The centralized error handler is appended after all routes in step 5.
 
 module.exports = app;

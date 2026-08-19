@@ -1,6 +1,6 @@
 # Design
 
-Rationale for the decisions made in steps 1–3. What the code does lives in
+Rationale for the decisions made in steps 1–4. What the code does lives in
 [ARCHITECTURE.md](ARCHITECTURE.md); this file covers *why*.
 
 ## Step 1 — server and connection design
@@ -14,8 +14,9 @@ Rationale for the decisions made in steps 1–3. What the code does lives in
   to make restarts meaningful.
 - **Config via `.env`.** `dotenv` loads `PORT` and `MONGO_URI`; `.env.example` documents
   defaults. The default `MONGO_URI` host is `mongo` (the planned Docker Compose service
-  name); host-local runs override it to `localhost`. `JWT_SECRET` is declared now so the
-  template is complete, but nothing reads it until step 4.
+  name); host-local runs override it to `localhost`. `JWT_SECRET` was declared from step 1
+  so the template was complete ahead of use; step 4 is the first to read it (signing and
+  verifying JWTs).
 
 ## Step 2 — schema design
 
@@ -49,8 +50,8 @@ convenience without duplicating data.
 ### Field-level decisions
 
 - **`password` uses `select: false`.** Queries never return the hash by accident — every
-  `find`/`findOne` excludes it unless the caller opts in. The step-4 login controller is
-  the *only* place that should use `.select('+password')`.
+  `find`/`findOne` excludes it unless the caller opts in. `authController.login` is the
+  *only* place that should use `.select('+password')`.
 - **`email` uses `lowercase: true` plus `unique`.** Lowercasing before save makes the
   unique index case-insensitive in practice: `Ada@example.com` and `ada@example.com`
   cannot both register.
@@ -102,23 +103,60 @@ convenience without duplicating data.
   `{ error: { message, status, details } }` via a local `sendError` helper, so the
   step-5 refactor to central middleware is consumer-invisible.
 
+## Step 4 — auth and validation design
+
+- **`bcryptjs` over native `bcrypt`.** Pure JS, identical API (`hash`/`compare`). The
+  payoff lands in step 6: the Docker image needs no build toolchain (`python3`/`make`/
+  `g++`) and is free to use a slim base like `node:24-slim`. This project has no
+  password-hashing throughput problem for native bcrypt to solve.
+- **Hashing lives in the model, not the controller.** A `pre('save')` hook guarded by
+  `isModified('password')` means every write path hashes exactly once, and future
+  profile-update saves don't re-hash a hash. Mongoose runs validators *before*
+  `pre('save')`, so `minlength: 8` checks the plaintext — deliberate, not a bug.
+- **Validator/schema defense in depth.** The express-validator chains duplicate the
+  schema rules on purpose: they reject bad input before a DB round-trip and report all
+  field errors at once, while Mongoose validation remains the last line of defense.
+  Both layers emit the same flat `details` array, so clients see one 400 shape.
+- **`publicUser` serializer.** `select: false` does not protect the register response —
+  `User.create()` returns the document just built, hashed password included (`select`
+  only applies to query-loaded documents). Auth responses are built explicitly from
+  `{ id, username, email, role }` so the hash cannot leak by construction.
+- **`role` is excluded from the register whitelist.** A client cannot self-register as
+  `admin`; the schema default (`user`) applies. Promotion is a manual/DB operation.
+- **Duplicate registration → 409.** Mongo's `11000` duplicate-key error is mapped to
+  409 `'Username or email already in use'` — not 400 (the request was well-formed; it
+  conflicts with existing state) and not a 500 fall-through. Step 5 moves this branch
+  into the central handler.
+- **One `'Invalid email or password'` message** for both unknown-email and wrong-password
+  logins — the response must not reveal whether an account exists. Login lowercases the
+  incoming email before lookup because the schema's `lowercase: true` normalizes on
+  save, not on query.
+- **Token design.** Payload is `{ id, role }` with the id stringified at signing so
+  `requireAuth` hands `authorizePostMutation` exactly the shape step 3 coded against.
+  Expiry is hardcoded at 1h (the spec's value; an env var would be unrequested
+  configurability). Bearer-token-in-body response, no cookie — no browser consumes
+  this API.
+- **`author` comes only from the token.** `createPost` now sets `author: req.user.id`;
+  the body field is ignored, closing the forged-authorship hole the step-3 interim
+  state documented.
+
 ## Known constraints carried forward
 
 These are consequences of the current design that later steps must handle:
 
 1. **Duplicate `username`/`email` is not a `ValidationError`.** Unique-index violations
-   surface as `MongoServerError` code `11000`. Step 5's central error handler needs an
-   explicit case for it, or registration collisions will 500 instead of 409.
-2. **Login must opt into the password field.** Because of `select: false`, step 4's
-   login controller must use `.select('+password')` or comparison will always fail.
-3. **Passwords are stored as-is until step 4.** The schema validates length only;
-   bcrypt hashing is deliberately deferred to the auth step. Do not create real
-   accounts before step 4 lands.
-4. **No retry on DB connection.** Under Docker Compose (step 6), the API container may
+   surface as `MongoServerError` code `11000`. The register controller maps it to 409;
+   step 5's central error handler must keep an explicit case for it when the branch
+   moves there.
+2. **Login must opt into the password field.** Because of `select: false`, the login
+   controller uses `.select('+password')` — it is the only place that should.
+3. **No retry on DB connection.** Under Docker Compose (step 6), the API container may
    need a healthcheck/`depends_on` condition (or a connection retry) since Mongo can
    come up slower than the API.
-5. **`POST /api/posts` is unprotected until step 4.** It trusts `author` from the
-   request body. Step 4 adds `requireAuth` and sources `author` from `req.user.id`.
-6. **`PUT`/`DELETE /api/posts/:id` return 401 for everyone until step 4.** The
-   ownership check reads `req.user`, which nothing populates yet — the routes are
-   deliberately closed rather than silently open in the interim.
+4. **Every controller still emits errors via the `sendError` util**
+   (`src/utils/sendError.js`). Step 5 deletes it and converts all call sites in
+   `postController.js`, `authController.js`, `requireAuth.js`, and
+   `validators/index.js` to `next(err)` + central middleware; response shapes are
+   already final, so the refactor is consumer-invisible.
+5. **Step 6 may use a slim Node base image** — `bcryptjs` is pure JS, no build
+   toolchain needed. The container's env must supply a real `JWT_SECRET`.

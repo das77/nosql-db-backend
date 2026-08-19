@@ -29,7 +29,7 @@ An Express 5 + Mongoose 9 REST backend, built incrementally in reviewable steps
    |----------|---------|-------|
    | `PORT` | `3000` | HTTP port the API listens on |
    | `MONGO_URI` | `mongodb://mongo:27017/app` | Default assumes Docker Compose (host `mongo`); use `mongodb://localhost:27017/app` when running directly on the host |
-   | `JWT_SECRET` | — | Not used yet; reserved for step 4 (auth) |
+   | `JWT_SECRET` | — | Secret used to sign and verify JWTs |
 
 2. Install and run:
 
@@ -55,11 +55,31 @@ listening without a database connection.
 | Method | Route | Description |
 |--------|-------|-------------|
 | GET | `/health` | Liveness check, returns `{"status":"ok"}` |
+| POST | `/api/auth/register` | Register; returns `{ token, user }` |
+| POST | `/api/auth/login` | Log in; returns `{ token, user }` |
 | GET | `/api/posts` | List posts; supports `?status=`, `?author=`, `?tags=`, `?sort=`, `?page=`, `?limit=` |
 | GET | `/api/posts/:id` | Fetch one post with its author populated |
-| POST | `/api/posts` | Create a post (auth arrives in step 4) |
-| PUT | `/api/posts/:id` | Update a post — author or admin only |
-| DELETE | `/api/posts/:id` | Delete a post — author or admin only |
+| POST | `/api/posts` | Create a post — requires `Authorization: Bearer <token>` |
+| PUT | `/api/posts/:id` | Update a post — requires bearer token; author or admin only |
+| DELETE | `/api/posts/:id` | Delete a post — requires bearer token; author or admin only |
+
+### Authentication
+
+Register (or log in) to receive a JWT, then send it on every mutating request as
+`Authorization: Bearer <token>`. Tokens expire after 1 hour — log in again for a
+fresh one.
+
+```bash
+TOKEN=$(curl -s -X POST http://localhost:3000/api/auth/register \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"ada","email":"ada@example.com","password":"correct horse"}' | jq -r .token)
+
+curl -X POST http://localhost:3000/api/posts \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"title":"Hello","body":"My first post, at least ten chars."}'
+```
+
+A post's `author` always comes from the token — it cannot be set in the request body.
 
 ### Query parameters
 
@@ -75,10 +95,6 @@ curl 'http://localhost:3000/api/posts?status=published&tags=node,express&sort=-c
 
 Error responses use the envelope `{ "error": { "message", "status", "details" } }`.
 
-Interim states until step 4 lands: `POST /api/posts` is unprotected (and takes
-`author` from the request body), while `PUT`/`DELETE` return 401 for everyone
-because the ownership check has no authenticated user to read yet.
-
 ## Project structure
 
 ```
@@ -92,9 +108,16 @@ src/
     Post.js        Post schema (title, body, status, tags, author → User)
   controllers/
     postController.js  Post CRUD handlers: filtering, sorting, pagination, ownership check
+    authController.js  register/login — bcrypt via the User model, JWT issuing
   routes/
     postRoutes.js  /api/posts router wiring the five handlers
-  middleware/      (steps 4–5)
+    authRoutes.js  /api/auth router: register + login
+  middleware/
+    requireAuth.js Verifies the Bearer JWT, sets req.user { id, role }
+  validators/
+    index.js       express-validator chains + shared 400 collector
+  utils/
+    sendError.js   Interim error envelope helper (replaced by middleware in step 5)
 docs/
   ARCHITECTURE.md  Layering, boot sequence, request flow
   DESIGN.md        Schema design and rationale
@@ -106,8 +129,8 @@ docs/
 |------|--------|--------|
 | 1 | `step-1-project-setup` — Express server, health check, DB connection utility | ✅ merged (PR #1) |
 | 2 | `step-2-mongoose-schemas` — User and Post models | ✅ merged (PR #2) |
-| 3 | `step-3-crud-query-features` — CRUD routes, `?status=`/`?author=` filters | ✅ current branch |
-| 4 | `step-4-auth-validation` — bcrypt password hashing, JWT auth | planned |
+| 3 | `step-3-crud-query-features` — CRUD routes, `?status=`/`?author=` filters | ✅ merged (PR #3) |
+| 4 | `step-4-auth-validation` — bcrypt password hashing, JWT auth | ✅ current branch |
 | 5 | `step-5-error-handling` — central error handler (ValidationError, duplicate key) | planned |
 | 6 | `step-6-docker` — Docker Compose (API + Mongo) | planned |
 | 7 | `step-7-docs-rationale` — final documentation pass | planned |

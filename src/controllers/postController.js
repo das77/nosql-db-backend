@@ -1,24 +1,15 @@
 const Post = require('../models/Post');
-// Registers the User model so populate('author') can resolve the 'User' ref —
-// nothing else imports it until step 4 adds auth routes.
+// Registers the User model so populate('author') can resolve the 'User' ref.
 require('../models/User');
+const sendError = require('../utils/sendError');
 
 // Populate projection for author on every read path (spec: these two fields only).
 const AUTHOR_FIELDS = 'username email';
 const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 100;
 
-// Interim error responder. Replaced by the centralized error middleware in step 5;
-// the response shape is already the final one so consumers don't see a break.
-function sendError(res, status, message, details = null) {
-  res.status(status).json({ error: { message, status, details } });
-}
-
 // Ownership rule for PUT/DELETE: the post's author, or any admin.
-// req.user is populated by the auth middleware added in step 4. Until then this
-// returns 401 for every request, so these routes are closed rather than open.
-// If step 4's JWT payload uses `sub` rather than `id`, the comparison below is
-// the single place to adjust.
+// req.user is populated by the requireAuth middleware.
 function authorizePostMutation(req, res, post) {
   if (!req.user) {
     sendError(res, 401, 'Authentication required');
@@ -112,8 +103,6 @@ async function getPost(req, res) {
 }
 
 // POST /api/posts
-// TODO(step-4): apply requireAuth middleware to this route; then source author
-// from req.user.id and drop author from the body whitelist below.
 async function createPost(req, res) {
   try {
     // Whitelisted body fields only — a client must not set createdAt or _id.
@@ -122,9 +111,8 @@ async function createPost(req, res) {
       body: req.body.body,
       status: req.body.status,
       tags: req.body.tags,
-      // Interim: trusted from the body until step 4 replaces it with req.user.id.
-      // If absent, the schema's required validator produces the 400 below.
-      author: req.body.author
+      // From the verified token, never the body — clients cannot forge authorship.
+      author: req.user.id
     };
     const post = await Post.create(doc);
     await post.populate('author', AUTHOR_FIELDS);

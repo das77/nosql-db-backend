@@ -10,6 +10,9 @@ app.get('/health', (req, res) => {
 
 app.use('/api/posts', require('./routes/postRoutes'));
 app.use('/api/auth', require('./routes/authRoutes'));
-// The centralized error handler is appended after all routes in step 5.
+
+// notFound must come after every route mount and before errorHandler.
+app.use(require('./middleware/notFound'));
+app.use(require('./middleware/errorHandler'));
 
 module.exports = app;

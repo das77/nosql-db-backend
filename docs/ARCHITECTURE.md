@@ -1,6 +1,6 @@
 # Architecture
 
-Current as of step 6 (`step-6-docker`). Sections marked *(planned)* describe
+Current as of step 7 (`step-7-swagger`). Sections marked *(planned)* describe
 work scheduled for later steps and do not exist in the code yet.
 
 ## Overview
@@ -113,6 +113,26 @@ keeps an explicit `try/catch` and calls `next(new AppError(...))` itself. Unmatc
 routes hit `notFound`, which raises a 404 `AppError` so even `GET /api/nope` returns
 the same JSON envelope instead of Express's default HTML error page.
 
+### Route mount order
+
+```
+express.json()
+  → GET /health
+  → /api/posts        (postRoutes)
+  → /api/auth         (authRoutes)
+  → /api-docs         (swagger-ui-express, serving openapi.yaml)
+  → notFound           (catch-all 404)
+  → errorHandler        (central error handler, always last)
+```
+
+`/api-docs` is mounted after every API router and before `notFound` — the ordering
+comment in `app.js` calls this out explicitly, because mounting it after `notFound`
+would let the catch-all swallow it before Swagger UI ever sees the request.
+`src/config/swagger.js` reads and parses `openapi.yaml` synchronously at `require`
+time (module load, before the app starts listening), so a missing or malformed spec
+file crashes the app at boot rather than 500-ing on the first `/api-docs` hit —
+consistent with `connectDB()`'s fail-fast posture.
+
 Global middleware: `express.json()` (malformed JSON bodies are rejected with 400 by
 Express's default error handling).
 
@@ -130,6 +150,7 @@ Express's default error handling).
 | `src/validators/index.js` | express-validator chains + shared 400 collector | Business rules; Mongoose validation remains the last line of defense |
 | `src/controllers/authController.js` | Register/login, JWT signing, public user serialization | Password hashing (model's job), catching its own errors |
 | `src/utils/AppError.js` | Throwable carrying `status`/`details` for deliberate error responses | Formatting the JSON envelope (handler's job) |
+| `src/config/swagger.js` | Read + parse `openapi.yaml` once at boot | Serve the docs UI (that's `swagger-ui-express`'s job in `app.js`) |
 
 ## Data model
 
@@ -226,4 +247,6 @@ Work proceeds one branch per step, merged to `main` by PR.
 | `5caa512` | Merge PR #4 — step 4 complete |
 | `d6d9bb2`–`e14f51c` | Step-5 central error handling: `AppError.js`, `errorHandler.js`, `notFound.js`; `sendError.js` deleted; controllers/middleware/validators converted to throw/`next(err)` |
 | `24e1137` | Merge PR #5 — step 5 complete |
-| *(uncommitted, step 6)* | `Dockerfile`, `docker-compose.yml`, `.dockerignore`; `.env.example` flipped to the host-dev `MONGO_URI` default |
+| `7f7ad11`–`e22f6bf` | Step-6 Docker: `Dockerfile`, `docker-compose.yml`, `.dockerignore`; `.env.example` flipped to the host-dev `MONGO_URI` default |
+| `def115e` | Merge PR #6 — step 6 complete |
+| *(uncommitted, step 7)* | `openapi.yaml`, `src/config/swagger.js`; `/api-docs` mounted in `app.js`; `Dockerfile` gains `COPY openapi.yaml ./` |

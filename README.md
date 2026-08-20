@@ -83,6 +83,16 @@ listening without a database connection.
 | POST | `/api/posts` | Create a post — requires `Authorization: Bearer <token>` |
 | PUT | `/api/posts/:id` | Update a post — requires bearer token; author or admin only |
 | DELETE | `/api/posts/:id` | Delete a post — requires bearer token; author or admin only |
+| GET | `/api-docs` | Interactive OpenAPI documentation (Swagger UI) |
+
+### API documentation
+
+Start the app either way (`npm run dev` or `docker compose up`), then open
+<http://localhost:3000/api-docs>. The page is fully interactive: register or log in
+with "Try it out", copy the returned `token`, click **Authorize** and paste it in,
+then exercise the protected Post routes — everything drives real requests against the
+running API without leaving the browser. The token expires after 1 hour; log in again
+through the page to get a fresh one.
 
 ### Authentication
 
@@ -142,6 +152,7 @@ src/
   app.js           Express app: middleware + routes (exported separately for testability)
   config/
     db.js          connectDB() — mongoose.connect with fail-fast on error
+    swagger.js     Loads and parses openapi.yaml at boot (fail-fast if missing/malformed)
   models/
     User.js        User schema (username, email, password, role)
     Post.js        Post schema (title, body, status, tags, author → User)
@@ -162,6 +173,7 @@ src/
 docs/
   ARCHITECTURE.md  Layering, boot sequence, request flow
   DESIGN.md        Schema design and rationale
+openapi.yaml        OpenAPI 3.1 spec for the entire API surface, served at GET /api-docs
 Dockerfile          node:24-slim image; npm ci --omit=dev; runs as the non-root node user
 docker-compose.yml  api + mongo services, healthcheck-gated startup, named volume
 .dockerignore       Keeps node_modules, .env, and non-runtime files out of the build context
@@ -176,8 +188,9 @@ docker-compose.yml  api + mongo services, healthcheck-gated startup, named volum
 | 3 | `step-3-crud-query-features` — CRUD routes, `?status=`/`?author=` filters | ✅ merged (PR #3) |
 | 4 | `step-4-auth-validation` — bcrypt password hashing, JWT auth | ✅ merged (PR #4) |
 | 5 | `step-5-error-handling` — central error handler (ValidationError, duplicate key) | ✅ merged (PR #5) |
-| 6 | `step-6-docker` — Docker Compose (API + Mongo) | ✅ current branch |
-| 7 | `step-7-docs-rationale` — final documentation pass | planned |
+| 6 | `step-6-docker` — Docker Compose (API + Mongo) | ✅ merged (PR #6) |
+| 7 | `step-7-swagger` — OpenAPI spec + Swagger UI | ✅ current branch |
+| 8 | `step-8-docs-rationale` — final documentation pass | planned |
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the pieces fit together and
 [docs/DESIGN.md](docs/DESIGN.md) for why the schemas look the way they do.

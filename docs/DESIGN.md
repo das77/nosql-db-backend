@@ -1,6 +1,6 @@
 # Design
 
-Rationale for the decisions made in steps 1–6. What the code does lives in
+Rationale for the decisions made in steps 1–7. What the code does lives in
 [ARCHITECTURE.md](ARCHITECTURE.md); this file covers *why*.
 
 ## Step 1 — server and connection design
@@ -237,6 +237,48 @@ convenience without duplicating data.
   (there so `mongosh`/Compass can reach the containerized data directly) is what makes
   the absence of auth worth noticing at all.
 
+## Step 7 — OpenAPI spec + Swagger UI design
+
+- **Hand-authored `openapi.yaml`, not `swagger-jsdoc`-generated.** `swagger-jsdoc`
+  would scatter the spec across JSDoc comment blocks in route files — but this
+  codebase has never used JSDoc anywhere, and introducing that convention in the same
+  step that's meant to document what already exists would be backwards. A single YAML
+  file at the project root is also what the spec asks for verbatim.
+- **OpenAPI 3.1, not 3.0.** The error envelope's `details` field is a flat array of
+  strings *or* `null` — 3.1 allows a JSON-Schema-style `type: [array, "null"]` to
+  express that union directly. 3.0 would need `nullable: true` bolted onto an
+  `array` type, which is both less precise and less standard.
+- **Per-operation `security`, no global default.** `security: [{ bearerAuth: [] }]` is
+  set only on `POST /api/posts`, `PUT /api/posts/{id}`, `DELETE /api/posts/{id}` — the
+  three routes `requireAuth` actually guards. A top-level `security:` key would mark
+  every operation as requiring auth by default, including `/health`, both
+  `/api/auth/*` routes, and both `GET /api/posts*` routes — Swagger UI would render
+  padlocks on public endpoints, which is the single most common way a hand-maintained
+  API spec drifts from what the code actually does.
+- **`AuthorRef` is a separate schema from `UserPublic`, not a reused `$ref`.** They
+  look similar but are genuinely different shapes: `UserPublic` (`publicUser()`'s
+  output) has `id`; the populated `author` on a Post has `_id` and only the two
+  fields the `'username email'` populate projection selects. Merging them into one
+  schema would document a shape neither endpoint actually returns.
+- **`tags` is documented as two different types on purpose.** As a `?tags=` query
+  parameter it's a comma-separated string (`node,express`); in `PostCreateRequest`/
+  `PostUpdateRequest` it's a JSON array of strings. Same field name, two shapes, both
+  correct for where they appear — called out explicitly in both places' descriptions,
+  since it's the one part of the API surface most likely to make a reader assume the
+  spec has a typo.
+- **Fail-fast spec loading.** `src/config/swagger.js` reads and `yaml.load()`s
+  `openapi.yaml` synchronously at `require` time — a missing or malformed file
+  crashes the app at boot, not on the first hit to `/api-docs`. Consistent with
+  `connectDB()`'s established fail-fast posture: the failure a developer wants to see
+  is the loud one, immediately.
+- **`swagger-ui-express` and `js-yaml` are `dependencies`, not `devDependencies`.**
+  The container's `Dockerfile` runs `npm ci --omit=dev`, and `app.js` requires the
+  Swagger mount unconditionally at boot. Either package landing in `devDependencies`
+  would build a working image that then crashes on startup with `MODULE_NOT_FOUND` —
+  taking the whole API down, not just the docs page. `npm install <pkg>` defaults to
+  `dependencies`, so this is only a trap for a `-D` reached for out of habit on
+  something that looks documentation-shaped.
+
 ## Known constraints carried forward
 
 These are consequences of the current design that later steps must handle:
@@ -259,3 +301,10 @@ These are consequences of the current design that later steps must handle:
    note above. Applies to `JWT_SECRET` (and to `MONGO_URI` if a future step adds
    credentials to it), and only under `docker compose up`; host-mode `dotenv` does not
    do this interpolation.
+6. **`openapi.yaml` is hand-maintained, not generated.** Any change to a validator
+   chain (`src/validators/index.js`) or a Mongoose schema (`min`/`maxLength`, `enum`
+   values, `required` fields) must be mirrored in the spec by hand, or the
+   documentation silently drifts from what the API actually accepts and returns. The
+   spec file must also stay in the `Dockerfile`'s `COPY` list — removing it there
+   doesn't break the build, but crashes the container at startup (`src/config/swagger.js`
+   throws `ENOENT` at `require` time).

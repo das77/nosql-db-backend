@@ -19,33 +19,54 @@ An Express 5 + Mongoose 9 REST backend, built incrementally in reviewable steps
 
 ## Getting started
 
-1. Copy the environment template and adjust it:
+Either path needs a `.env` first — it's gitignored, so a fresh clone has none:
 
-   ```bash
-   cp .env.example .env
-   ```
+```bash
+cp .env.example .env     # then set a real JWT_SECRET
+```
 
-   | Variable | Default | Notes |
-   |----------|---------|-------|
-   | `PORT` | `3000` | HTTP port the API listens on |
-   | `MONGO_URI` | `mongodb://mongo:27017/app` | Default assumes Docker Compose (host `mongo`); use `mongodb://localhost:27017/app` when running directly on the host |
-   | `JWT_SECRET` | — | Secret used to sign and verify JWTs |
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `PORT` | `3000` | HTTP port the API listens on |
+| `MONGO_URI` | `mongodb://localhost:27017/app` | Used for host-mode runs. Under `docker compose up` this value is **ignored** — `docker-compose.yml` sets `MONGO_URI` to `mongodb://mongo:27017/app` for the container regardless of what's in `.env` |
+| `JWT_SECRET` | — | Secret used to sign and verify JWTs |
 
-2. Install and run:
+### Run with Docker (recommended)
 
-   ```bash
-   npm install
-   npm run dev    # nodemon, restarts on change
-   # or
-   npm start      # plain node
-   ```
+```bash
+docker compose up --build
+curl http://localhost:3000/health
+# {"status":"ok"}
+```
 
-3. Verify:
+Brings up `api` and `mongo` together; `api` waits for Mongo's healthcheck before it
+starts, so a cold start (Mongo initializing `/data/db` for the first time) doesn't
+race and crash. **`.env` must exist before this command** — `env_file: .env` in
+Compose is a hard error if the file is missing.
 
-   ```bash
-   curl http://localhost:3000/health
-   # {"status":"ok"}
-   ```
+- `docker compose down` stops the containers; data in Mongo **survives** (a named
+  volume persists it).
+- `docker compose down -v` also removes the volume — the next `up` starts from an
+  empty database.
+
+### Run on the host
+
+```bash
+npm install
+npm run dev    # nodemon, restarts on change
+# or
+npm start      # plain node
+```
+
+Requires a MongoDB reachable at the `MONGO_URI` in your `.env` (the default assumes
+`localhost:27017`, e.g. a Mongo you started separately, including via
+`docker compose up` — the `27017:27017` port mapping makes the containerized Mongo
+reachable from the host too).
+
+```bash
+curl http://localhost:3000/health
+# {"status":"ok"}
+```
 
 The server exits with code 1 if MongoDB is unreachable at boot — it does not start
 listening without a database connection.
@@ -141,6 +162,9 @@ src/
 docs/
   ARCHITECTURE.md  Layering, boot sequence, request flow
   DESIGN.md        Schema design and rationale
+Dockerfile          node:24-slim image; npm ci --omit=dev; runs as the non-root node user
+docker-compose.yml  api + mongo services, healthcheck-gated startup, named volume
+.dockerignore       Keeps node_modules, .env, and non-runtime files out of the build context
 ```
 
 ## Build roadmap
@@ -151,8 +175,8 @@ docs/
 | 2 | `step-2-mongoose-schemas` — User and Post models | ✅ merged (PR #2) |
 | 3 | `step-3-crud-query-features` — CRUD routes, `?status=`/`?author=` filters | ✅ merged (PR #3) |
 | 4 | `step-4-auth-validation` — bcrypt password hashing, JWT auth | ✅ merged (PR #4) |
-| 5 | `step-5-error-handling` — central error handler (ValidationError, duplicate key) | ✅ current branch |
-| 6 | `step-6-docker` — Docker Compose (API + Mongo) | planned |
+| 5 | `step-5-error-handling` — central error handler (ValidationError, duplicate key) | ✅ merged (PR #5) |
+| 6 | `step-6-docker` — Docker Compose (API + Mongo) | ✅ current branch |
 | 7 | `step-7-docs-rationale` — final documentation pass | planned |
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the pieces fit together and

@@ -177,7 +177,7 @@ src/
 docs/
   ARCHITECTURE.md  Layering, boot sequence, request flow
   DESIGN.md        Schema design and rationale
-RATIONALE.md        Why the schemas, query layer, and auth are built this way (short form)
+  RATIONALE.md     Why the schemas, query layer, and auth are built this way (short form)
 openapi.yaml        OpenAPI 3.1 spec for the entire API surface, served at GET /api-docs
 Dockerfile          node:24-slim image; npm ci --omit=dev; runs as the non-root node user
 docker-compose.yml  api + mongo services, healthcheck-gated startup, named volume
@@ -186,6 +186,6 @@ docker-compose.yml  api + mongo services, healthcheck-gated startup, named volum
 
 ## Design rationale
 
-See [RATIONALE.md](RATIONALE.md) for the short version of why the schemas, query layer, and
+See [docs/RATIONALE.md](docs/RATIONALE.md) for the short version of why the schemas, query layer, and
 auth are built this way, [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the pieces
 fit together, and [docs/DESIGN.md](docs/DESIGN.md) for the full per-step design log.

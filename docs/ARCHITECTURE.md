@@ -1,6 +1,6 @@
 # Architecture
 
-Current as of step 5 (`step-5-error-handling`). Sections marked *(planned)* describe
+Current as of step 6 (`step-6-docker`). Sections marked *(planned)* describe
 work scheduled for later steps and do not exist in the code yet.
 
 ## Overview
@@ -39,7 +39,7 @@ flowchart TD
     controllers -.->|throw / next err| middleware
 ```
 
-As of step 5 the full layering is live and every planned piece has landed: routes run
+As of step 6 the full application layering is live and every planned piece has landed: routes run
 `requireAuth` and the express-validator chains before their controllers, the auth pair
 (`/api/auth/register`, `/api/auth/login`) issues the JWTs the middleware verifies, and
 every error — thrown from an async controller, passed to `next()`, or an unmatched
@@ -159,6 +159,48 @@ erDiagram
     }
 ```
 
+## Deployment: Docker Compose
+
+The project's only deployment target. Two services, brought up together with a single
+`docker compose up`:
+
+```mermaid
+flowchart LR
+    host([developer's machine])
+
+    subgraph compose["docker compose"]
+        api["api container<br/>node:24-slim · npm start<br/>:3000"]
+        mongo["mongo container<br/>mongo:7<br/>:27017"]
+        vol[("mongo-data<br/>named volume")]
+    end
+
+    host -->|":3000"| api
+    host -->|":27017 (mongosh/Compass)"| mongo
+    api -->|"mongodb://mongo:27017/app<br/>(Compose internal DNS)"| mongo
+    mongo --> vol
+```
+
+- **Internal DNS.** Inside the Compose network, `api` reaches Mongo at the hostname
+  `mongo` (the service name) — a different address than host-mode `npm run dev` uses
+  (`localhost`). `docker-compose.yml` sets `MONGO_URI` via an explicit `environment:`
+  override so this is always correct for the container regardless of what `.env`
+  holds. See DESIGN.md for why one file can't hold both values.
+- **Healthcheck-gated startup.** `mongo` declares a `healthcheck` (`mongosh --eval
+  db.adminCommand('ping')`); `api` declares `depends_on: mongo: condition:
+  service_healthy`. Plain `depends_on` only waits for the container to *start*, not
+  for Mongo to accept connections — on a cold start (first-time `/data/db`
+  initialization) that race would let `api` boot before Mongo is ready, and
+  `connectDB()`'s fail-fast `process.exit(1)` would crash it. The healthcheck closes
+  that race at the orchestration layer without touching `connectDB()`.
+- **Named volume.** `mongo-data` persists Mongo's `/data/db` across `docker compose
+  down` / `up` cycles. `docker compose down -v` removes it, which is the only way to
+  reset to an empty database.
+- **Host access to both services.** `api` is published on host port 3000 (interpolated
+  from `PORT`, default 3000). `mongo` is also published, on 27017, so a developer can
+  point `mongosh` or Compass at the containerized database directly — useful for this
+  project's manual verification workflow, at the cost of the Mongo service having no
+  authentication (acceptable for a local-only stack; see DESIGN.md).
+
 ## Build history
 
 Work proceeds one branch per step, merged to `main` by PR.
@@ -182,4 +224,6 @@ Work proceeds one branch per step, merged to `main` by PR.
 | `893ecf2` | Merge PR #3 — step 3 complete |
 | `512033a`–`5a0ac04` | Step-4 auth: `authController.js`, `authRoutes.js`, `requireAuth.js`, `validators/`, bcrypt hook in `User.js` |
 | `5caa512` | Merge PR #4 — step 4 complete |
-| *(uncommitted, step 5)* | Central error handling: `AppError.js`, `errorHandler.js`, `notFound.js`; `sendError.js` deleted; controllers/middleware/validators converted to throw/`next(err)` |
+| `d6d9bb2`–`e14f51c` | Step-5 central error handling: `AppError.js`, `errorHandler.js`, `notFound.js`; `sendError.js` deleted; controllers/middleware/validators converted to throw/`next(err)` |
+| `24e1137` | Merge PR #5 — step 5 complete |
+| *(uncommitted, step 6)* | `Dockerfile`, `docker-compose.yml`, `.dockerignore`; `.env.example` flipped to the host-dev `MONGO_URI` default |

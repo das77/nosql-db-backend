@@ -1,6 +1,6 @@
 # Design
 
-Rationale for the decisions made in steps 1–5. What the code does lives in
+Rationale for the decisions made in steps 1–6. What the code does lives in
 [ARCHITECTURE.md](ARCHITECTURE.md); this file covers *why*.
 
 ## Step 1 — server and connection design
@@ -10,11 +10,13 @@ Rationale for the decisions made in steps 1–5. What the code does lives in
   `server.js` binds a port and touches the database.
 - **Fail-fast DB connection.** `connectDB()` calls `process.exit(1)` on failure rather
   than retrying. At this stage of the project a bad `MONGO_URI` should be loud and
-  immediate; retry/backoff can be added when there's an orchestrator (step 6, Docker)
-  to make restarts meaningful.
+  immediate; retry/backoff would have solved the same race an orchestrator can — and
+  step 6's Compose healthcheck does exactly that, without touching this code.
 - **Config via `.env`.** `dotenv` loads `PORT` and `MONGO_URI`; `.env.example` documents
-  defaults. The default `MONGO_URI` host is `mongo` (the planned Docker Compose service
-  name); host-local runs override it to `localhost`. `JWT_SECRET` was declared from step 1
+  defaults. Since step 6, `MONGO_URI` in `.env`/`.env.example` is the host-dev value
+  (`localhost`) — Docker Compose sets the container's `MONGO_URI` to `mongo` (the
+  Compose service name) itself, via an `environment:` override; see the step-6 section
+  below. `JWT_SECRET` was declared from step 1
   so the template was complete ahead of use; step 4 is the first to read it (signing and
   verifying JWTs).
 
@@ -182,6 +184,59 @@ convenience without duplicating data.
   response in the API that didn't match the documented envelope. `notFound` (mounted
   after every route, before `errorHandler`) closes that gap with a three-line module.
 
+## Step 6 — Docker Compose design
+
+- **Healthcheck + `depends_on: condition: service_healthy` over app-level retry
+  logic.** `connectDB()`'s fail-fast `process.exit(1)` was a deliberate, documented
+  choice in step 1 and re-justified in step 5 — an orchestration-layer race (Mongo not
+  yet accepting connections on a cold start) is an orchestration problem, and Compose
+  already has the primitive for it. Reopening finished application code to add
+  retry/backoff would solve the same problem worse, in more places. Plain
+  `depends_on` alone is not enough: it waits for the `mongo` container to *start*, not
+  for `mongosh --eval db.adminCommand('ping')` to succeed, which is the actual race
+  the spec's "single `docker compose up`" acceptance bar cares about.
+- **`environment:` override for `MONGO_URI`, on top of `env_file: .env`.** The
+  developer's real local `.env` holds a credentialed **localhost** URI (what host-mode
+  `npm run dev` has needed since step 1). Feeding that file straight to the `api`
+  container via `env_file` would point the container at itself, where nothing
+  listens, and `connectDB()` would exit 1 on every cold start — the one failure mode
+  that most needs to not happen. Host-mode and container-mode need genuinely
+  different values for the same variable; one `.env` file cannot hold both. Compose
+  applies `environment:` over `env_file:`, so `docker-compose.yml` hardcodes
+  `MONGO_URI: mongodb://mongo:27017/app` for the container while `PORT` and
+  `JWT_SECRET` still flow through from `.env` normally. Consequence: `.env.example`'s
+  `MONGO_URI` flips to the host-dev value (`localhost`), and its header comment now
+  explains that Compose ignores it.
+- **`node:24-slim` base image.** Matches the local Node version, Debian-based (no
+  musl surprises), and needs no build toolchain — which is only possible because step
+  4 chose `bcryptjs` over native `bcrypt` for exactly this payoff. That choice pays
+  out here.
+- **`mongo:7` pinned, not `latest`.** Reproducible builds; `latest` could silently
+  jump a major version and break the stack on an unrelated day. `mongo:7` also ships
+  `mongosh`, which the healthcheck depends on.
+- **Single-stage Dockerfile, `npm ci --omit=dev`.** No build step exists in this
+  project (no TypeScript, no bundler), so a multi-stage build would have nothing to
+  copy between stages. `--omit=dev` drops `nodemon`, which has no reason to be in a
+  container that only ever runs `npm start`.
+- **`$` in `.env` values needs `$$` escaping.** Discovered during verification: Compose
+  interpolates `$identifier` patterns in values it reads from `.env` — including values
+  consumed via `env_file:` for the `api` service, not just `${VAR}` references inside
+  `docker-compose.yml` itself. A `JWT_SECRET` containing a literal `$` followed by
+  letters/digits/underscore (a realistic shape for a random-generator-produced secret)
+  gets that fragment silently dropped, so the container runs with a *different* secret
+  than what's written in `.env`, with no error — Compose only warns
+  (`"$X" variable is not set. Defaulting to a blank string.`), which is easy to miss
+  among normal build output. The stack still functions (both signing and verifying read
+  the same, if-mangled, value), but a developer inspecting or reusing the configured
+  secret would be misled. `.env.example`'s comment now calls this out explicitly.
+- **No authentication on the `mongo` service.** The spec doesn't ask for it, the
+  database isn't exposed beyond the developer's own machine, and adding
+  `MONGO_INITDB_ROOT_*` credentials would mean threading them into `MONGO_URI` for no
+  requirement this project has. This is a conscious local-only scope decision, not an
+  oversight — worth stating explicitly because the `27017:27017` host port mapping
+  (there so `mongosh`/Compass can reach the containerized data directly) is what makes
+  the absence of auth worth noticing at all.
+
 ## Known constraints carried forward
 
 These are consequences of the current design that later steps must handle:
@@ -191,12 +246,16 @@ These are consequences of the current design that later steps must handle:
    409.
 2. **Login must opt into the password field.** Because of `select: false`, the login
    controller uses `.select('+password')` — it is the only place that should.
-3. **No retry on DB connection.** Under Docker Compose (step 6), the API container may
-   need a healthcheck/`depends_on` condition (or a connection retry) since Mongo can
-   come up slower than the API.
-4. **`requireAuth` is the only non-async error source and keeps an explicit
+3. **`requireAuth` is the only non-async error source and keeps an explicit
    `try/catch`.** Every other error path relies on Express 5's promise
    auto-forwarding or an explicit `throw`/`next(new AppError(...))`; this is the one
    deliberate exception, and it exists because `requireAuth` isn't declared `async`.
-5. **Step 6 may use a slim Node base image** — `bcryptjs` is pure JS, no build
-   toolchain needed. The container's env must supply a real `JWT_SECRET`.
+4. **The container ignores `.env`'s `MONGO_URI` by design.** `docker-compose.yml`'s
+   `environment:` override always wins for the `api` service — changing `MONGO_URI`
+   in `.env` has no effect on `docker compose up` runs. It only affects host-mode
+   `npm run dev`/`npm start`.
+5. **A literal `$` in any `.env` value must be escaped as `$$`** or Compose silently
+   drops the fragment it mistakes for a variable reference — see the step-6 design
+   note above. Applies to `JWT_SECRET` (and to `MONGO_URI` if a future step adds
+   credentials to it), and only under `docker compose up`; host-mode `dotenv` does not
+   do this interpolation.

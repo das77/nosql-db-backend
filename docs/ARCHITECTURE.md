@@ -1,7 +1,7 @@
 # Architecture
 
-Current as of step 7 (`step-7-swagger`). Sections marked *(planned)* describe
-work scheduled for later steps and do not exist in the code yet.
+Current as of step 8 (`step-8-docs-rationale`), the final step — the 8-step build is
+complete and everything described here exists in the code.
 
 ## Overview
 
@@ -39,7 +39,7 @@ flowchart TD
     controllers -.->|throw / next err| middleware
 ```
 
-As of step 6 the full application layering is live and every planned piece has landed: routes run
+The full application layering is live and every planned piece has landed: routes run
 `requireAuth` and the express-validator chains before their controllers, the auth pair
 (`/api/auth/register`, `/api/auth/login`) issues the JWTs the middleware verifies, and
 every error — thrown from an async controller, passed to `next()`, or an unmatched
@@ -249,4 +249,6 @@ Work proceeds one branch per step, merged to `main` by PR.
 | `24e1137` | Merge PR #5 — step 5 complete |
 | `7f7ad11`–`e22f6bf` | Step-6 Docker: `Dockerfile`, `docker-compose.yml`, `.dockerignore`; `.env.example` flipped to the host-dev `MONGO_URI` default |
 | `def115e` | Merge PR #6 — step 6 complete |
-| *(uncommitted, step 7)* | `openapi.yaml`, `src/config/swagger.js`; `/api-docs` mounted in `app.js`; `Dockerfile` gains `COPY openapi.yaml ./` |
+| `5f07760`–`9457d0d` | Step-7 OpenAPI: `openapi.yaml`, `src/config/swagger.js`; `/api-docs` mounted in `app.js`; `Dockerfile` gains `COPY openapi.yaml ./` |
+| `72e347f` | Merge PR #7 — step 7 complete |
+| *(uncommitted, step 8)* | `RATIONALE.md` — the spec's Written Explanation |

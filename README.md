@@ -6,6 +6,10 @@ with an Express API.
 An Express 5 + Mongoose 9 REST backend, built incrementally in reviewable steps
 (one branch per step). Each step is merged into `main` via PR before the next begins.
 
+<!-- docs-pages-link:start -->
+📚 Docs: https://das77.github.io/nosql-db-backend/
+<!-- docs-pages-link:end -->
+
 ## Stack
 
 | Component | Choice | Version |
@@ -185,7 +189,3 @@ docker-compose.yml  api + mongo services, healthcheck-gated startup, named volum
 See [RATIONALE.md](RATIONALE.md) for the short version of why the schemas, query layer, and
 auth are built this way, [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the pieces
 fit together, and [docs/DESIGN.md](docs/DESIGN.md) for the full per-step design log.
-
-<!-- docs-pages-link:start -->
-📚 Docs: https://das77.github.io/nosql-db-backend/
-<!-- docs-pages-link:end -->

@@ -151,37 +151,37 @@ not Express's default HTML error page.
 ## Project structure
 
 ```
-src/
-  server.js        Entry point: loads .env, connects DB, starts listening
-  app.js           Express app: middleware + routes (exported separately for testability)
-  config/
-    db.js          connectDB() — mongoose.connect with fail-fast on error
-    swagger.js     Loads and parses openapi.yaml at boot (fail-fast if missing/malformed)
-  models/
-    User.js        User schema (username, email, password, role)
-    Post.js        Post schema (title, body, status, tags, author → User)
-  controllers/
-    postController.js  Post CRUD handlers: filtering, sorting, pagination, ownership check
-    authController.js  register/login — bcrypt via the User model, JWT issuing
-  routes/
-    postRoutes.js  /api/posts router wiring the five handlers
-    authRoutes.js  /api/auth router: register + login
-  middleware/
-    requireAuth.js Verifies the Bearer JWT, sets req.user { id, role }
-    notFound.js    Catch-all for unmatched routes — forwards a 404 AppError
-    errorHandler.js  Central error handler — the only place that writes the error envelope
-  validators/
-    index.js       express-validator chains + shared 400 collector
-  utils/
-    AppError.js    Error subclass carrying the status/details the handler responds with
-docs/
-  ARCHITECTURE.md  Layering, boot sequence, request flow
-  DESIGN.md        Schema design and rationale
-  RATIONALE.md     Why the schemas, query layer, and auth are built this way (short form)
-openapi.yaml        OpenAPI 3.1 spec for the entire API surface, served at GET /api-docs
-Dockerfile          node:24-slim image; npm ci --omit=dev; runs as the non-root node user
-docker-compose.yml  api + mongo services, healthcheck-gated startup, named volume
-.dockerignore       Keeps node_modules, .env, and non-runtime files out of the build context
+├── src/
+│   ├── server.js            Entry point: loads .env, connects DB, starts listening
+│   ├── app.js               Express app: middleware + routes (exported separately for testability)
+│   ├── config/
+│   │   ├── db.js            connectDB() — mongoose.connect with fail-fast on error
+│   │   └── swagger.js       Loads and parses openapi.yaml at boot (fail-fast if missing/malformed)
+│   ├── models/
+│   │   ├── User.js          User schema (username, email, password, role)
+│   │   └── Post.js          Post schema (title, body, status, tags, author → User)
+│   ├── controllers/
+│   │   ├── postController.js  Post CRUD handlers: filtering, sorting, pagination, ownership check
+│   │   └── authController.js  register/login — bcrypt via the User model, JWT issuing
+│   ├── routes/
+│   │   ├── postRoutes.js    /api/posts router wiring the five handlers
+│   │   └── authRoutes.js    /api/auth router: register + login
+│   ├── middleware/
+│   │   ├── requireAuth.js   Verifies the Bearer JWT, sets req.user { id, role }
+│   │   ├── notFound.js      Catch-all for unmatched routes — forwards a 404 AppError
+│   │   └── errorHandler.js  Central error handler — the only place that writes the error envelope
+│   ├── validators/
+│   │   └── index.js         express-validator chains + shared 400 collector
+│   └── utils/
+│       └── AppError.js      Error subclass carrying the status/details the handler responds with
+├── docs/
+│   ├── ARCHITECTURE.md      Layering, boot sequence, request flow
+│   ├── DESIGN.md            Schema design and rationale
+│   └── RATIONALE.md         Why the schemas, query layer, and auth are built this way (short form)
+├── openapi.yaml             OpenAPI 3.1 spec for the entire API surface, served at GET /api-docs
+├── Dockerfile               node:24-slim image; npm ci --omit=dev; runs as the non-root node user
+├── docker-compose.yml       api + mongo services, healthcheck-gated startup, named volume
+└── .dockerignore            Keeps node_modules, .env, and non-runtime files out of the build context
 ```
 
 ## Design rationale

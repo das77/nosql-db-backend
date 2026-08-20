@@ -180,19 +180,6 @@ docker-compose.yml  api + mongo services, healthcheck-gated startup, named volum
 .dockerignore       Keeps node_modules, .env, and non-runtime files out of the build context
 ```
 
-## Build roadmap
-
-| Step | Branch | Status |
-|------|--------|--------|
-| 1 | `step-1-project-setup` — Express server, health check, DB connection utility | ✅ merged (PR #1) |
-| 2 | `step-2-mongoose-schemas` — User and Post models | ✅ merged (PR #2) |
-| 3 | `step-3-crud-query-features` — CRUD routes, `?status=`/`?author=` filters | ✅ merged (PR #3) |
-| 4 | `step-4-auth-validation` — bcrypt password hashing, JWT auth | ✅ merged (PR #4) |
-| 5 | `step-5-error-handling` — central error handler (ValidationError, duplicate key) | ✅ merged (PR #5) |
-| 6 | `step-6-docker` — Docker Compose (API + Mongo) | ✅ merged (PR #6) |
-| 7 | `step-7-swagger` — OpenAPI spec + Swagger UI | ✅ merged (PR #7) |
-| 8 | `step-8-docs-rationale` — final documentation pass | ✅ current branch |
-
 ## Design rationale
 
 See [RATIONALE.md](RATIONALE.md) for the short version of why the schemas, query layer, and

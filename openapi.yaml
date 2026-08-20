@@ -1,0 +1,510 @@
+openapi: 3.1.0
+info:
+  title: Express + MongoDB Posts API
+  version: 1.0.0
+  description: >
+    A REST API for managing Posts authored by Users, with JWT authentication,
+    query-driven filtering/sorting/pagination, and a consistent error envelope.
+    Register or log in below, copy the returned token into "Authorize", then
+    exercise the protected Post routes.
+servers:
+  - url: http://localhost:3000
+    description: Local (npm run dev or docker compose up)
+tags:
+  - name: Health
+  - name: Auth
+  - name: Posts
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    UserPublic:
+      type: object
+      description: >
+        Public representation of a user. The password hash is never returned
+        by any endpoint, under any circumstances.
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+        email:
+          type: string
+        role:
+          type: string
+          enum: [user, admin]
+      required: [id, username, email, role]
+
+    AuthorRef:
+      type: object
+      description: >
+        The populated author on a Post. Distinct from UserPublic: the populate
+        projection is 'username email', so this carries _id (not id) and
+        nothing else.
+      properties:
+        _id:
+          type: string
+        username:
+          type: string
+        email:
+          type: string
+      required: [_id, username, email]
+
+    Post:
+      type: object
+      properties:
+        _id:
+          type: string
+        title:
+          type: string
+        body:
+          type: string
+        status:
+          type: string
+          enum: [draft, published, archived]
+          default: draft
+        tags:
+          type: array
+          items:
+            type: string
+        author:
+          $ref: '#/components/schemas/AuthorRef'
+        createdAt:
+          type: string
+          format: date-time
+        __v:
+          type: integer
+
+    PostCreateRequest:
+      type: object
+      description: >
+        No `author` field: the author is always taken from the verified
+        bearer token. A body-supplied `author` is ignored.
+      properties:
+        title:
+          type: string
+          minLength: 3
+          maxLength: 120
+        body:
+          type: string
+          minLength: 10
+        status:
+          type: string
+          enum: [draft, published, archived]
+        tags:
+          type: array
+          items:
+            type: string
+      required: [title, body]
+
+    PostUpdateRequest:
+      type: object
+      description: Every field is optional; only the fields present are updated.
+      properties:
+        title:
+          type: string
+          minLength: 3
+          maxLength: 120
+        body:
+          type: string
+          minLength: 10
+        status:
+          type: string
+          enum: [draft, published, archived]
+        tags:
+          type: array
+          items:
+            type: string
+
+    RegisterRequest:
+      type: object
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 30
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+      required: [username, email, password]
+
+    LoginRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 1
+      required: [email, password]
+
+    AuthResponse:
+      type: object
+      properties:
+        token:
+          type: string
+        user:
+          $ref: '#/components/schemas/UserPublic'
+      required: [token, user]
+
+    PostPage:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Post'
+        page:
+          type: integer
+        limit:
+          type: integer
+        total:
+          type: integer
+        totalPages:
+          type: integer
+      required: [data, page, limit, total, totalPages]
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            message:
+              type: string
+            status:
+              type: integer
+            details:
+              type: [array, 'null']
+              items:
+                type: string
+          required: [message, status, details]
+      required: [error]
+
+  responses:
+    BadRequest:
+      description: Bad request — failed validation or a malformed filter value.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              message: Validation failed
+              status: 400
+              details: ['Title must be between 3 and 120 characters']
+    Unauthorized:
+      description: Not authenticated.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              message: Authentication required
+              status: 401
+              details: null
+    Forbidden:
+      description: Authenticated but not permitted.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              message: You may only modify your own posts
+              status: 403
+              details: null
+    NotFound:
+      description: Resource not found.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              message: Post not found
+              status: 404
+              details: null
+    Conflict:
+      description: Conflict with existing state.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              message: Username or email already in use
+              status: 409
+              details: null
+    ServerError:
+      description: Unexpected server error.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              message: Internal server error
+              status: 500
+              details: null
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Liveness check
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                example:
+                  status: ok
+
+  /api/auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new user
+      description: >
+        Creates a user and returns a JWT valid for 1 hour. `role` cannot be
+        set here — new users are always created as `user`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/auth/login:
+    post:
+      tags: [Auth]
+      summary: Log in
+      description: >
+        Returns a JWT valid for 1 hour. The 401 message is identical for an
+        unknown email and a wrong password, by design — the response never
+        reveals whether an account exists.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/posts:
+    get:
+      tags: [Posts]
+      summary: List posts
+      description: >
+        `tags` here is a comma-separated string (e.g. `node,express`), unlike
+        `PostCreateRequest.tags`, which is a JSON array. Same field name, two
+        different shapes — both correct for where they appear.
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [draft, published, archived]
+          description: Exact match.
+        - name: author
+          in: query
+          required: false
+          schema:
+            type: string
+          description: >
+            User ObjectId. A malformed value returns 400 "Invalid author id".
+        - name: tags
+          in: query
+          required: false
+          schema:
+            type: string
+          description: >
+            Comma-separated (e.g. node,express); matches posts having any of
+            the listed tags.
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+          description: >
+            Comma-separated fields; a `-` prefix means descending. Default is
+            `-createdAt`. Example: `title,-createdAt`.
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+          description: Out-of-range pages return an empty `data` array, not an error.
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 10
+            minimum: 1
+            maximum: 100
+          description: Values above 100 are silently capped, not rejected.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [Posts]
+      summary: Create a post
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PostCreateRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Post'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/posts/{id}:
+    get:
+      tags: [Posts]
+      summary: Get a post by id
+      description: >
+        A malformed id returns 404, not 400 — a malformed id names a resource
+        that cannot exist.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Post'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags: [Posts]
+      summary: Update a post
+      description: >
+        Only the post's author or an admin may update it. `author` is not
+        reassignable.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PostUpdateRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Post'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    delete:
+      tags: [Posts]
+      summary: Delete a post
+      description: >
+        Only the post's author or an admin may delete it.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: No Content
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'

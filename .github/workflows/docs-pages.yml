@@ -1,0 +1,92 @@
+name: Deploy docs to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Build docs/ with Jekyll
+        uses: actions/jekyll-build-pages@v1
+        with:
+          source: ./docs
+          destination: ./_site
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./_site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  update-readme:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Update README with the Pages link
+        env:
+          PAGES_URL: ${{ needs.deploy.outputs.page_url }}
+        run: |
+          MARKER_START="<!-- docs-pages-link:start -->"
+          MARKER_END="<!-- docs-pages-link:end -->"
+          BLOCK="$MARKER_START"$'\n'"📚 Docs: $PAGES_URL"$'\n'"$MARKER_END"
+
+          if grep -qF "$MARKER_START" README.md; then
+            awk -v block="$BLOCK" -v start="$MARKER_START" -v end="$MARKER_END" '
+              $0 ~ start { print block; skip=1; next }
+              $0 ~ end { skip=0; next }
+              skip { next }
+              { print }
+            ' README.md > README.md.tmp
+            mv README.md.tmp README.md
+          else
+            {
+              echo ""
+              echo "$BLOCK"
+            } >> README.md
+          fi
+
+      - name: Commit and push if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          if git diff --cached --quiet; then
+            echo "README already up to date; nothing to commit."
+          else
+            git commit -m "docs: update GitHub Pages link in README [skip ci]"
+            git push
+          fi

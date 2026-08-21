@@ -249,3 +249,4 @@ Work proceeds one branch per step, merged to `main` by PR.
 | `5f07760`–`9457d0d` | OpenAPI: `openapi.yaml`, `src/config/swagger.js`; `/api-docs` mounted in `app.js`; `Dockerfile` gains `COPY openapi.yaml ./` |
 | `72e347f` | Merge PR #7 — |
 | `ea604b4` | `RATIONALE.md` — the spec's Written Explanation |
+| `b91e118` | Jest + Supertest integration suite (`tests/`), `mongodb-memory-server`, `.env.test`, `jest.config.js` — no `src/` changes |

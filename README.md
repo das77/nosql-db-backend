@@ -148,6 +148,22 @@ envelope: `{ "error": { "message": string, "status": number, "details": [...] | 
 An unmatched route (e.g. `GET /api/nope`) also returns this JSON envelope with a 404,
 not Express's default HTML error page.
 
+## Tests
+
+```bash
+npm test
+```
+
+An integration suite (Jest + Supertest) covering registration/login (including the
+duplicate `username`/`email` conflicts and the identical-message login-failure
+behavior), post CRUD and ownership rules (author vs. admin vs. a different user, with
+missing/invalid/expired tokens), and pagination edge cases (defaults, the `limit`
+cap, out-of-range pages, malformed query input, and filtered totals). It runs against
+`mongodb-memory-server` — an in-memory MongoDB started fresh for the run — so it needs
+no local database and never touches `.env` or a real Mongo instance; test-only config
+comes from the committed `.env.test`. The **first** run downloads a `mongod` binary
+and takes noticeably longer than subsequent runs.
+
 ## Project structure
 
 ```
@@ -174,11 +190,21 @@ not Express's default HTML error page.
 │   │   └── index.js         express-validator chains + shared 400 collector
 │   └── utils/
 │       └── AppError.js      Error subclass carrying the status/details the handler responds with
+├── tests/
+│   ├── globalSetup.js       Starts one in-memory MongoDB for the whole test run
+│   ├── globalTeardown.js    Stops it
+│   ├── setup.js             Per-file: connect, clear collections after each test, disconnect
+│   ├── helpers.js           registerUser/registerAdmin/createPost/seedPosts factories
+│   ├── auth.test.js         Registration, login, duplicate-conflict coverage
+│   ├── posts.test.js        Post CRUD + ownership rules (author/admin/other user)
+│   └── pagination.test.js   Pagination edge cases: defaults, cap, out-of-range, filters
 ├── docs/
 │   ├── ARCHITECTURE.md      Layering, boot sequence, request flow
 │   ├── DESIGN.md            Schema design and rationale
 │   └── RATIONALE.md         Why the schemas, query layer, and auth are built this way (short form)
 ├── openapi.yaml             OpenAPI 3.1 spec for the entire API surface, served at GET /api-docs
+├── jest.config.js           Jest config: globalSetup/Teardown, setupFilesAfterEnv, testMatch
+├── .env.test                Committed test-only JWT_SECRET (not a secret — see Tests section)
 ├── Dockerfile               node:24-slim image; npm ci --omit=dev; runs as the non-root node user
 ├── docker-compose.yml       api + mongo services, healthcheck-gated startup, named volume
 └── .dockerignore            Keeps node_modules, .env, and non-runtime files out of the build context

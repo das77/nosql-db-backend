@@ -278,6 +278,53 @@ convenience without duplicating data.
   `dependencies`, so this is only a trap for a `-D` reached for out of habit on
   something that looks documentation-shaped.
 
+## Step 9 — Jest + Supertest integration suite design
+
+- **Integration tests, not unit tests, and not mocked.** The spec forbids mocking
+  Mongoose, and the value in this codebase isn't in any single function — it's in the
+  wiring: middleware ordering (`requireAuth` before validation before the
+  controller), the ownership check reading the right shape off `req.user`, and every
+  error path landing on the one central envelope. Supertest drives real HTTP requests
+  through the real `app.js`, against a real (if in-memory) MongoDB, so a test failure
+  means the wiring is actually broken, not that a mock drifted from reality.
+- **One in-memory MongoDB for the whole run, not one per file.** `globalSetup` starts
+  a single `MongoMemoryServer` and publishes its URI via `process.env.MONGO_URI`
+  before any test file loads; `globalTeardown` stops it. Starting a fresh instance
+  per file would multiply the binary spin-up cost by the file count for no isolation
+  benefit — `afterEach` already clears every collection between tests.
+- **`deleteMany`, not `dropDatabase`, between tests.** This is easy to get backwards:
+  dropping the database would also discard the unique indexes Mongoose builds on
+  `username`/`email` at connect time, after which the duplicate-registration test
+  would get a `201` instead of a `409` — a passing-looking failure that reads as an
+  application bug, not a test-setup bug. Clearing documents instead of the whole
+  database keeps the indexes intact across every test.
+- **`.env.test` is loaded by `tests/setup.js`, not by the app.** `src/server.js` is
+  the only place `dotenv.config()` runs in production code, and tests never load
+  `server.js` — Supertest imports `src/app.js` directly, which never touches `.env`
+  at all. `MONGO_URI` deliberately isn't in `.env.test`: the in-memory server's URI
+  doesn't exist until `globalSetup` starts it, so hardcoding a value would be a
+  landmine that silently activates if the setup order ever changed.
+- **`.env.test` is committed on purpose, despite `.gitignore`'s `.env.*` rule.** Its
+  `JWT_SECRET` is a fixed dummy that only ever signs tokens against a throwaway
+  database that stops existing when the test run ends — it protects nothing real.
+  Committing it is what lets `npm test` pass on a fresh clone with no local `.env`;
+  the alternative (gitignored) would make the suite depend on exactly the
+  developer-machine state the spec asked it to be independent of, and it would pass
+  silently on the machine that wrote it while failing everywhere else.
+- **`--runInBand`.** Spec-mandated: Mongoose connections don't parallelize cleanly
+  across Jest's default multi-worker model, and there's exactly one shared in-memory
+  server for every file to contend over.
+- **The admin-token re-issue subtlety in `registerAdmin`.** A JWT carries `role` at
+  signing time. Promoting a user's `role` to `admin` in the database after their
+  token was already issued does not change what that token says — a test that
+  promotes and then reuses the original token would get a `403` on an assertion
+  meant to prove admins get a `200`, and the failure would look like a bug in
+  `assertCanMutate` rather than a bug in the test helper. `registerAdmin` promotes
+  via the model directly (the only option, since `register` deliberately whitelists
+  `role` out of the request body — step 4's anti-privilege-escalation measure, not an
+  obstacle to route around) and then logs in again to get a token that actually says
+  `role: 'admin'`.
+
 ## Known constraints carried forward
 
 These are consequences of the current design that later steps must handle:

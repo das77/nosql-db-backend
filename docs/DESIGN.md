@@ -1,7 +1,6 @@
 # Design
 
-Rationale for the decisions made in steps 1–7. What the code does lives in
-[ARCHITECTURE.md](ARCHITECTURE.md); this file covers *why*.
+What the code does lives in [ARCHITECTURE.md](ARCHITECTURE.md); this file covers *why*.
 
 ## Step 1 — server and connection design
 

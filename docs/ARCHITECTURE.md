@@ -1,8 +1,5 @@
 # Architecture
 
-Current as of step 8 (`step-8-docs-rationale`), the final step — the 8-step build is
-complete and everything described here exists in the code.
-
 ## Overview
 
 A conventional layered Express + Mongoose backend. The entry point (`server.js`) is kept
@@ -75,7 +72,7 @@ sequenceDiagram
 ## Request flow
 
 | Method | Route | Middleware chain | Response |
-|--------|-------|------------------|----------|
+| -------- | ------- | ------------------ | ---------- |
 | GET | `/health` | — (inline in `app.js`) | 200 `{"status":"ok"}` |
 | POST | `/api/auth/register` | validation → `authController.register` | 201 `{ token, user }` / 400 / 409 |
 | POST | `/api/auth/login` | validation → `authController.login` | 200 `{ token, user }` / 400 / 401 |
@@ -115,7 +112,7 @@ the same JSON envelope instead of Express's default HTML error page.
 
 ### Route mount order
 
-```
+```javascript
 express.json()
   → GET /health
   → /api/posts        (postRoutes)
@@ -139,7 +136,7 @@ Express's default error handling).
 ## Module responsibilities
 
 | Module | Responsibility | Deliberately does NOT |
-|--------|----------------|-----------------------|
+| -------- | ---------------- | ----------------------- |
 | `src/server.js` | Load env, connect DB, start listening | Define routes or middleware |
 | `src/app.js` | Assemble the Express app (middleware + routes), export it | Read env vars, open ports, or connect to the DB |
 | `src/config/db.js` | Single `connectDB()` — connect or `process.exit(1)` | Retry/backoff (fail-fast is intentional at this stage) |
@@ -227,7 +224,7 @@ flowchart LR
 Work proceeds one branch per step, merged to `main` by PR.
 
 | Commit | Change |
-|--------|--------|
+| -------- | -------- |
 | `c5e5b14` | Initial commit |
 | `31ed5f2` | `.gitignore` for Claude artifacts and specs |
 | `c86a0c2` | Initial (empty) ARCHITECTURE.md and DESIGN.md placeholders |
@@ -237,18 +234,18 @@ Work proceeds one branch per step, merged to `main` by PR.
 | `033ecbc` | Entry point wiring app + DB connection (`src/server.js`) |
 | `6525abf` | `connectDB()` utility (`src/config/db.js`) |
 | `6bd3770` | `.gitkeep` files for `controllers/`, `routes/`, `middleware/`, `models/` |
-| `0ea61e9` | Merge PR #1 — step 1 complete |
+| `0ea61e9` | Merge PR #1 — |
 | `594f745` | Post model (`src/models/Post.js`) |
 | `c9ae7a6` | User model (`src/models/User.js`) |
-| `6d88872` | Merge PR #2 — step 2 complete |
-| `c0886da`–`7645f14` | Step-3 CRUD: controller, routes, `/api/posts` mount, `tags` index |
-| `893ecf2` | Merge PR #3 — step 3 complete |
-| `512033a`–`5a0ac04` | Step-4 auth: `authController.js`, `authRoutes.js`, `requireAuth.js`, `validators/`, bcrypt hook in `User.js` |
-| `5caa512` | Merge PR #4 — step 4 complete |
-| `d6d9bb2`–`e14f51c` | Step-5 central error handling: `AppError.js`, `errorHandler.js`, `notFound.js`; `sendError.js` deleted; controllers/middleware/validators converted to throw/`next(err)` |
-| `24e1137` | Merge PR #5 — step 5 complete |
-| `7f7ad11`–`e22f6bf` | Step-6 Docker: `Dockerfile`, `docker-compose.yml`, `.dockerignore`; `.env.example` flipped to the host-dev `MONGO_URI` default |
-| `def115e` | Merge PR #6 — step 6 complete |
-| `5f07760`–`9457d0d` | Step-7 OpenAPI: `openapi.yaml`, `src/config/swagger.js`; `/api-docs` mounted in `app.js`; `Dockerfile` gains `COPY openapi.yaml ./` |
-| `72e347f` | Merge PR #7 — step 7 complete |
-| *(uncommitted, step 8)* | `RATIONALE.md` — the spec's Written Explanation |
+| `6d88872` | Merge PR #2 |
+| `c0886da`–`7645f14` | CRUD: controller, routes, `/api/posts` mount, `tags` index |
+| `893ecf2` | Merge PR #3 |
+| `512033a`–`5a0ac04` | auth: `authController.js`, `authRoutes.js`, `requireAuth.js`, `validators/`, bcrypt hook in `User.js` |
+| `5caa512` | Merge PR #4 — |
+| `d6d9bb2`–`e14f51c` | central error handling: `AppError.js`, `errorHandler.js`, `notFound.js`; `sendError.js` deleted; controllers/middleware/validators converted to throw/`next(err)` |
+| `24e1137` | Merge PR #5 — |
+| `7f7ad11`–`e22f6bf` | Docker: `Dockerfile`, `docker-compose.yml`, `.dockerignore`; `.env.example` flipped to the host-dev `MONGO_URI` default |
+| `def115e` | Merge PR #6 — complete |
+| `5f07760`–`9457d0d` | OpenAPI: `openapi.yaml`, `src/config/swagger.js`; `/api-docs` mounted in `app.js`; `Dockerfile` gains `COPY openapi.yaml ./` |
+| `72e347f` | Merge PR #7 — |
+| `ea604b4` | `RATIONALE.md` — the spec's Written Explanation |

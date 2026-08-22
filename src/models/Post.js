@@ -33,9 +33,14 @@ const postSchema = new mongoose.Schema({
   }
 });
 
-// These back the ?status= / ?author= / ?tags= filters added in step 3.
-postSchema.index({ status: 1 });
+// Compound index: the common access pattern is a status filter with the default
+// -createdAt sort, which this satisfies as one index scan. Its `status` prefix also
+// serves bare `status` lookups, so a separate { status: 1 } would be redundant.
+postSchema.index({ status: 1, createdAt: -1 });
+// Backs ?author=<id> and the ownership lookups on PUT/DELETE.
 postSchema.index({ author: 1 });
-postSchema.index({ tags: 1 });
+// tags is deliberately NOT indexed: it's an $in over a small, low-cardinality array,
+// and a multikey index only pays off once cardinality or query volume justifies it.
+// (Step 3 added one speculatively; step 10 removed it.)
 
 module.exports = mongoose.model('Post', postSchema);

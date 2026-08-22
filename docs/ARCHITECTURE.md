@@ -148,6 +148,7 @@ Express's default error handling).
 | `src/controllers/authController.js` | Register/login, JWT signing, public user serialization | Password hashing (model's job), catching its own errors |
 | `src/utils/AppError.js` | Throwable carrying `status`/`details` for deliberate error responses | Formatting the JSON envelope (handler's job) |
 | `src/config/swagger.js` | Read + parse `openapi.yaml` once at boot | Serve the docs UI (that's `swagger-ui-express`'s job in `app.js`) |
+| `src/utils/cursor.js` | Encode/decode opaque paging cursors; validate a decoded cursor into real `Date`/`ObjectId` before it reaches a query | Build the keyset query itself (that's `listPosts`) |
 
 ## Data model
 
@@ -176,6 +177,14 @@ erDiagram
         date createdAt
     }
 ```
+
+`Post` declares two indexes: the compound `{ status: 1, createdAt: -1 }` (the common
+filter-plus-default-sort access pattern in one scan; its `status` prefix also covers
+bare `status` lookups) and `{ author: 1 }` (the `?author=` filter and the ownership
+lookups on PUT/DELETE). `tags` is deliberately unindexed. `username` and `email` get
+unique indexes implicitly from `unique: true`. See DESIGN.md's step-10 entry for why
+the earlier `{ status: 1 }` and `{ tags: 1 }` indexes were revised away — and for why
+that revision does not apply itself to an existing database.
 
 ## Deployment: Docker Compose
 
@@ -250,3 +259,4 @@ Work proceeds one branch per step, merged to `main` by PR.
 | `72e347f` | Merge PR #7 — |
 | `ea604b4` | `RATIONALE.md` — the spec's Written Explanation |
 | `b91e118` | Jest + Supertest integration suite (`tests/`), `mongodb-memory-server`, `.env.test`, `jest.config.js` — no `src/` changes |
+| *(uncommitted, step 10)* | Cursor/keyset pagination alongside offset (`src/utils/cursor.js`, `listPosts` mode branch); `Post` indexes revised to compound `{ status: 1, createdAt: -1 }` with `{ tags: 1 }` removed |

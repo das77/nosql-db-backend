@@ -82,7 +82,7 @@ listening without a database connection.
 | GET | `/health` | Liveness check, returns `{"status":"ok"}` |
 | POST | `/api/auth/register` | Register; returns `{ token, user }` |
 | POST | `/api/auth/login` | Log in; returns `{ token, user }` |
-| GET | `/api/posts` | List posts; supports `?status=`, `?author=`, `?tags=`, `?sort=`, `?page=`, `?limit=` |
+| GET | `/api/posts` | List posts; supports `?status=`, `?author=`, `?tags=`, `?sort=`, `?page=`, `?cursor=`, `?limit=` |
 | GET | `/api/posts/:id` | Fetch one post with its author populated |
 | POST | `/api/posts` | Create a post — requires `Authorization: Bearer <token>` |
 | PUT | `/api/posts/:id` | Update a post — requires bearer token; author or admin only |
@@ -118,15 +118,37 @@ A post's `author` always comes from the token — it cannot be set in the reques
 
 ### Query parameters
 
-`GET /api/posts` responds with the pagination envelope
-`{ data, page, limit, total, totalPages }`. `limit` defaults to 10 and is capped at
-100 — asking for more silently gets 100. `?tags=` accepts a comma-separated list and
-matches posts having any of them; `?sort=` accepts comma-separated fields with a `-`
-prefix for descending (default `-createdAt`).
+`?tags=` accepts a comma-separated list and matches posts having any of them; `?sort=`
+accepts comma-separated fields with a `-` prefix for descending (default `-createdAt`).
+`limit` defaults to 10 and is capped at 100 in both paging modes — asking for more
+silently gets 100.
+
+**Offset mode** (the default) responds with
+`{ data, page, limit, total, totalPages }` and can jump to any page:
 
 ```bash
 curl 'http://localhost:3000/api/posts?status=published&tags=node,express&sort=-createdAt&page=1&limit=20'
 ```
+
+**Cursor mode** is active when `?cursor=` is present and `page` is not. It responds
+with `{ data, limit, nextCursor, hasMore }` — no `total`/`totalPages`, since computing
+them needs the count query this mode exists to avoid. It stays constant-cost at any
+depth, but pages forward only, on the default `-createdAt` sort:
+
+```bash
+# follow nextCursor from the previous response
+curl 'http://localhost:3000/api/posts?limit=10&cursor=eyJjcmVhdGVkQXQiOiIyMDI2LTA4LTIxVDEyOjAwOjAwLjAwMFoiLCJfaWQiOiI2NmM0YzMxMmE0YjJlMTAwMDAwMDAwMDEifQ=='
+# → { "data": [...], "limit": 10, "nextCursor": "eyJjcmVhdGVk...", "hasMore": true }
+# repeat with the new nextCursor until hasMore is false and nextCursor is null
+```
+
+The cursor is opaque — treat it as a token to echo back, not something to construct.
+Note the offset response carries no `nextCursor`, so a client makes one offset call
+before it can switch to cursor paging.
+
+`GET /api/posts` returns **400** for a malformed `?author=`, a malformed `?cursor=`,
+or `cursor` combined with a non-default `sort`. If both `page` and `cursor` are given,
+`page` wins and you get the offset envelope.
 
 Error responses use the envelope `{ "error": { "message", "status", "details" } }`.
 
@@ -189,7 +211,8 @@ and takes noticeably longer than subsequent runs.
 │   ├── validators/
 │   │   └── index.js         express-validator chains + shared 400 collector
 │   └── utils/
-│       └── AppError.js      Error subclass carrying the status/details the handler responds with
+│       ├── AppError.js      Error subclass carrying the status/details the handler responds with
+│       └── cursor.js        Opaque paging cursor encode/decode, with validation before any query
 ├── tests/
 │   ├── globalSetup.js       Starts one in-memory MongoDB for the whole test run
 │   ├── globalTeardown.js    Stops it

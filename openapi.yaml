@@ -173,6 +173,27 @@ components:
           type: integer
       required: [data, page, limit, total, totalPages]
 
+    PostCursorPage:
+      type: object
+      description: >
+        Returned when paging by `cursor`. Deliberately carries no `total`,
+        `page`, or `totalPages` — computing them would require the count query
+        this mode exists to avoid.
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Post'
+        limit:
+          type: integer
+        nextCursor:
+          type: [string, 'null']
+          description: >
+            Pass as `?cursor=` to fetch the next page. `null` on the final page.
+        hasMore:
+          type: boolean
+      required: [data, limit, nextCursor, hasMore]
+
     Error:
       type: object
       properties:
@@ -336,6 +357,13 @@ paths:
       tags: [Posts]
       summary: List posts
       description: >
+        Supports two paging modes. **Offset** (the default) returns
+        `PostPage` with `page`/`total`/`totalPages` and can jump to any page.
+        **Cursor** — active only when `cursor` is present and `page` is not —
+        returns `PostCursorPage`, pages forward at constant cost regardless of
+        depth, and runs no count query.
+
+
         `tags` here is a comma-separated string (e.g. `node,express`), unlike
         `PostCreateRequest.tags`, which is a JSON array. Same field name, two
         different shapes — both correct for where they appear.
@@ -369,7 +397,9 @@ paths:
             type: string
           description: >
             Comma-separated fields; a `-` prefix means descending. Default is
-            `-createdAt`. Example: `title,-createdAt`.
+            `-createdAt`. Example: `title,-createdAt`. Ignored in cursor mode
+            unless it is equivalent to the default — any other value alongside
+            `cursor` returns 400, rather than being silently discarded.
         - name: page
           in: query
           required: false
@@ -377,7 +407,21 @@ paths:
             type: integer
             default: 1
             minimum: 1
-          description: Out-of-range pages return an empty `data` array, not an error.
+          description: >
+            Out-of-range pages return an empty `data` array, not an error.
+            Selects offset mode: if both `page` and `cursor` are supplied,
+            `page` wins and the response is a `PostPage`.
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          description: >
+            Opaque base64 cursor taken from the previous response's
+            `nextCursor`. Selects cursor mode (unless `page` is also present,
+            which wins). A malformed cursor returns 400 "Invalid cursor". Note
+            the offset response carries no `nextCursor`, so a client makes one
+            offset call before it can switch to cursor paging.
         - name: limit
           in: query
           required: false
@@ -386,14 +430,17 @@ paths:
             default: 10
             minimum: 1
             maximum: 100
-          description: Values above 100 are silently capped, not rejected.
+          description: Values above 100 are silently capped, not rejected. Applies to both modes.
       responses:
         '200':
-          description: OK
+          description: >
+            `PostPage` in offset mode, `PostCursorPage` in cursor mode.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PostPage'
+                oneOf:
+                  - $ref: '#/components/schemas/PostPage'
+                  - $ref: '#/components/schemas/PostCursorPage'
         '400':
           $ref: '#/components/responses/BadRequest'
         '500':

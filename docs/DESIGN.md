@@ -77,6 +77,9 @@ convenience without duplicating data.
 
 (`username` and `email` get unique indexes implicitly from `unique: true`.)
 
+*Revised in step 10: `{ status: 1 }` became the compound `{ status: 1, createdAt: -1 }`
+and `{ tags: 1 }` was removed. See the step-10 entry for the current set.*
+
 ## Step 3 — CRUD and query design
 
 - **Whitelisted filters, never `req.query` spread.** The Mongo filter is built only
@@ -90,9 +93,12 @@ convenience without duplicating data.
   Mongo walk and discard `skip` documents, so very deep pagination degrades. At this
   project's scale that's acceptable; a cursor (range-based) scheme is the upgrade path
   if it ever matters. `limit` is unconditionally capped at 100.
+  - *Step 10 added that cursor mode — alongside offset rather than replacing it, since
+    jump-to-page is a real requirement keyset can't serve. See the step-10 entry.*
 - **`tags` multikey index.** `?tags=` is a spec-listed filter on an array field, which
   is exactly what a Mongo multikey index serves — consistent with the `status`/`author`
   indexes added in step 2 for the same reason.
+  - *Superseded in step 10 — the index was removed; see the step-10 entry.*
 - **Deliberate 400-vs-404 CastError asymmetry.** A malformed `:id` path param is a 404
   (`getPost` — the id names a resource that cannot exist, and the spec groups invalid
   ObjectId casts on lookup under 404), while a malformed `?author=` filter value is a
@@ -325,6 +331,61 @@ convenience without duplicating data.
   obstacle to route around) and then logs in again to get a token that actually says
   `role: 'admin'`.
 
+## Step 10 — cursor pagination and index revision
+
+- **Two paging modes, not a replacement.** Keyset paging can't jump to an arbitrary
+  page, and jump-to-page is a real requirement offset already serves. So cursor mode
+  was added alongside offset rather than instead of it: offset stays the default and
+  keeps its exact previous behavior (step 9's pagination tests are the regression net
+  and pass untouched), while cursor mode is opt-in via `?cursor=`.
+- **The `$or` keyset and why `_id` is the tiebreaker.** `createdAt` is not unique —
+  two posts written in the same millisecond, or bulk-imported with one timestamp,
+  collide. A naive `createdAt < cursor.createdAt` would then skip or repeat every row
+  sharing a boundary timestamp. The condition is therefore
+  `{ createdAt: { $lt: c } }` OR `{ createdAt: c, _id: { $lt: id } }`, with the query
+  sorted `{ createdAt: -1, _id: -1 }` so the compound ordering matches the predicate.
+  The test that pins this gives *every* seeded post an identical `createdAt`, so every
+  page boundary lands on a tie — a tie that doesn't straddle a boundary doesn't
+  exercise the tiebreaker at all.
+- **`limit + 1` for `hasMore`.** Fetch one extra document, then trim it before
+  responding. This is what preserves the mode's defining property: no count query at
+  any depth. `nextCursor` is built from the last *returned* document, after trimming —
+  building it from the probe document would skip a record on the next page.
+- **Cursor validation happens before the query, and the reason is step 5.** A cursor
+  is opaque base64 of JSON, so `{ createdAt: 'banana', _id: 'nope' }` decodes fine and
+  only fails inside Mongoose's cast layer — as a `CastError`, which step 5's central
+  handler maps to `404 'Post not found'`. On a *list* endpoint that reads as a
+  baffling not-found rather than the 400 a malformed parameter deserves. `decodeCursor`
+  therefore validates the date and round-trips the ObjectId itself, exactly as step 5's
+  `ObjectId.isValid()` guard on `?author=` does, and for exactly the same reason. (See
+  the step-5 entry's `isValid()` note — the coupling runs both ways: that handler's
+  `CastError` → 404 rule is only safe as long as `listPosts` never emits one.) The
+  malformed-cursor tests assert `not 404` explicitly, because "not 200" would pass
+  against the bug.
+- **`?cursor=…&sort=-createdAt` is allowed; any other sort is a 400.** Cursor mode
+  encodes the sort direction in the keyset itself, so a different sort can't be
+  honored — and silently ignoring the parameter would be worse than rejecting it. An
+  explicitly-stated default is accepted because it asks for exactly what the mode
+  already does; rejecting it would be surprising.
+- **The `tags` index was removed — a deliberate reversal of step 3.** Step 3 added
+  `{ tags: 1 }` reasoning that `?tags=` is a spec-listed filter on an array field. That
+  reasoning was speculative: it's an `$in` over a small, low-cardinality array, and a
+  multikey index carries a real write cost that only pays off at cardinality or query
+  volume this project doesn't have. This is a considered reversal, not an accidental
+  deletion. `{ status: 1 }` likewise became the compound `{ status: 1, createdAt: -1 }`,
+  which serves the filter-plus-default-sort pattern in one scan and whose `status`
+  prefix still covers bare `status` lookups, making a separate single-field index
+  redundant.
+- **Removing an index line does not drop the index from an existing database.**
+  Mongoose creates declared indexes on model init; it never removes ones you deleted
+  from the schema. A fresh database — including the in-memory instance the tests use,
+  and any `docker compose up` on a clean volume — gets exactly the new set. A
+  long-lived `mongo-data` volume keeps the old `{ status: 1 }` and `{ tags: 1 }`
+  indexes indefinitely: harmless for correctness, wasteful on writes. Matching a
+  running instance to the declared set is a manual `db.posts.dropIndex('status_1')` /
+  `dropIndex('tags_1')`, or `docker compose down -v` to start clean. Not scripted: a
+  one-off local development database doesn't warrant a migration mechanism.
+
 ## Known constraints carried forward
 
 These are consequences of the current design that later steps must handle:
@@ -354,3 +415,11 @@ These are consequences of the current design that later steps must handle:
    spec file must also stay in the `Dockerfile`'s `COPY` list — removing it there
    doesn't break the build, but crashes the container at startup (`src/config/swagger.js`
    throws `ENOENT` at `require` time).
+7. **Cursor paging is forward-only, on the default `-createdAt` sort.** There is no
+   previous-page cursor and no support for pagination by any other ordering; a client
+   needing either uses offset mode. A client also cannot start in cursor mode — the
+   offset response carries no `nextCursor`, so the first call is offset and the client
+   switches from there.
+8. **Declared index changes do not apply to an existing database.** Mongoose creates
+   indexes but never drops removed ones, so a long-lived volume keeps superseded
+   definitions until someone drops them manually — see the step-10 entry.

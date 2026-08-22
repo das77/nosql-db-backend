@@ -3,11 +3,49 @@ const Post = require('../models/Post');
 // Registers the User model so populate('author') can resolve the 'User' ref.
 require('../models/User');
 const AppError = require('../utils/AppError');
+const { encodeCursor, decodeCursor } = require('../utils/cursor');
 
 // Populate projection for author on every read path (spec: these two fields only).
 const AUTHOR_FIELDS = 'username email';
 const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 100;
+const DEFAULT_SORT = '-createdAt';
+
+// Whitelisted filter only — never spread req.query into the Mongo query.
+// Shared by both paging modes so status/author/tags apply identically to either.
+function buildFilter(query) {
+  const filter = {};
+  if (query.status !== undefined) {
+    filter.status = query.status;
+  }
+  if (query.author !== undefined) {
+    // Reject here rather than letting Mongo raise a CastError: that keeps
+    // CastError unambiguously meaning "bad :id" for the central handler.
+    if (!mongoose.Types.ObjectId.isValid(query.author)) {
+      throw new AppError(400, 'Invalid author id');
+    }
+    filter.author = query.author;
+  }
+  if (query.tags !== undefined) {
+    const tags = String(query.tags)
+      .split(',')
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0);
+    if (tags.length > 0) {
+      filter.tags = { $in: tags };
+    }
+  }
+  return filter;
+}
+
+// Mongoose accepts 'title -createdAt' natively, with '-' meaning descending.
+function normalizeSort(raw) {
+  const fields = String(raw)
+    .split(',')
+    .map((f) => f.trim())
+    .filter((f) => f.length > 0);
+  return fields.length > 0 ? fields.join(' ') : DEFAULT_SORT;
+}
 
 // Ownership rule for PUT/DELETE: the post's author, or any admin.
 // req.user is populated by the requireAuth middleware. The !req.user branch is
@@ -25,50 +63,58 @@ function assertCanMutate(req, post) {
 
 // GET /api/posts
 async function listPosts(req, res) {
-  // Whitelisted filter only — never spread req.query into the Mongo query.
-  const filter = {};
-  if (req.query.status !== undefined) {
-    filter.status = req.query.status;
-  }
-  if (req.query.author !== undefined) {
-    // Reject here rather than letting Mongo raise a CastError: that keeps
-    // CastError unambiguously meaning "bad :id" for the central handler.
-    if (!mongoose.Types.ObjectId.isValid(req.query.author)) {
-      throw new AppError(400, 'Invalid author id');
-    }
-    filter.author = req.query.author;
-  }
-  if (req.query.tags !== undefined) {
-    const tags = String(req.query.tags)
-      .split(',')
-      .map((t) => t.trim())
-      .filter((t) => t.length > 0);
-    if (tags.length > 0) {
-      filter.tags = { $in: tags };
-    }
-  }
+  const filter = buildFilter(req.query);
+  const sort = req.query.sort !== undefined ? normalizeSort(req.query.sort) : DEFAULT_SORT;
 
-  // Mongoose accepts 'title -createdAt' natively, with '-' meaning descending.
-  let sort = '-createdAt';
-  if (req.query.sort !== undefined) {
-    const fields = String(req.query.sort)
-      .split(',')
-      .map((f) => f.trim())
-      .filter((f) => f.length > 0);
-    if (fields.length > 0) {
-      sort = fields.join(' ');
+  let limit = parseInt(req.query.limit, 10);
+  if (Number.isNaN(limit) || limit < 1) {
+    limit = DEFAULT_LIMIT;
+  }
+  limit = Math.min(limit, MAX_LIMIT);
+
+  // Offset is the default: used when neither param is given, and whenever `page` is
+  // present. So ?page=2&cursor=abc resolves to offset mode rather than erroring.
+  const useCursor = req.query.cursor !== undefined && req.query.page === undefined;
+
+  if (useCursor) {
+    // Cursor mode encodes the -createdAt sort direction, so a different sort is a 400
+    // rather than a silently-ignored parameter.
+    if (req.query.sort !== undefined && sort !== DEFAULT_SORT) {
+      throw new AppError(400, 'cursor cannot be combined with a custom sort');
     }
+    const { createdAt, _id } = decodeCursor(req.query.cursor);
+    const keyset = {
+      ...filter,
+      // _id breaks ties: createdAt is not unique, so without this a page boundary
+      // landing between two identical timestamps would skip or repeat rows.
+      $or: [
+        { createdAt: { $lt: createdAt } },
+        { createdAt, _id: { $lt: _id } }
+      ]
+    };
+    // Fetch one extra to learn whether another page exists without a count query —
+    // that "no count at any depth" property is the whole reason this mode exists.
+    const docs = await Post.find(keyset)
+      .populate('author', AUTHOR_FIELDS)
+      .sort({ createdAt: -1, _id: -1 })
+      .limit(limit + 1);
+
+    const hasMore = docs.length > limit;
+    const data = hasMore ? docs.slice(0, limit) : docs;
+    // Built from the last *returned* doc, after trimming — using the extra probe
+    // document would skip a record on the next page.
+    const nextCursor = data.length > 0 && hasMore ? encodeCursor(data[data.length - 1]) : null;
+
+    // No total/page/totalPages: adding them would reintroduce the count this mode
+    // exists to avoid.
+    res.json({ data, limit, nextCursor, hasMore });
+    return;
   }
 
   let page = parseInt(req.query.page, 10);
   if (Number.isNaN(page) || page < 1) {
     page = 1;
   }
-  let limit = parseInt(req.query.limit, 10);
-  if (Number.isNaN(limit) || limit < 1) {
-    limit = DEFAULT_LIMIT;
-  }
-  limit = Math.min(limit, MAX_LIMIT);
   const skip = (page - 1) * limit;
 
   // Both queries must share the same filter or total will be wrong.
